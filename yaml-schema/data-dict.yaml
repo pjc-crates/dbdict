@@ -1,0 +1,198 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+description: >
+  Schema for data-dict.yaml — a data dictionary describing a collection of
+  related tables: their contents, constraints, connections, and domain
+  vocabulary.
+
+type: object
+additionalProperties: false
+required: [tables]
+properties:
+
+  # --- Tables --------------------------------------------------------------
+
+  tables:
+    description: Named list of tables in the dataset.
+    type: object
+    minProperties: 1
+    additionalProperties:
+      type: object
+      additionalProperties: false
+      required: [description, source, columns]
+      properties:
+
+        description:
+          description: Human-readable description (markdown allowed).
+          type: string
+          minLength: 1
+
+        details:
+          description: Additional information about the table.
+          type: string
+
+        source:
+          description: >
+            Map whose keys name an access method and whose values give the
+            location.
+          type: object
+          minProperties: 1
+          additionalProperties: false
+          properties:
+            parquet:
+              description: Path to a Parquet file (may include globs).
+              type: string
+            SQL:
+              description: A SQL table name or full SELECT statement.
+              type: string
+            R:
+              description: R code that returns the data.
+              type: string
+            Python:
+              description: Python code that returns the data.
+              type: string
+            pin:
+              description: Name of a Posit Connect pin.
+              type: string
+
+        columns:
+          description: Ordered list of column metadata.
+          type: array
+          minItems: 1
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, description]
+            properties:
+
+              name:
+                description: Column name. Must match the underlying data.
+                type: string
+                minLength: 1
+
+              type:
+                description: Analysis-level data type.
+                enum:
+                  - number
+                  - number(id)
+                  - number(ordinal)
+                  - number(quantity)
+                  - string
+                  - boolean
+                  - date
+                  - datetime
+                  - enum
+
+              constraints:
+                description: Column-level constraints.
+                type: array
+                uniqueItems: true
+                items:
+                  enum: [primary_key, foreign_key, required, unique]
+
+              description:
+                description: Human-readable description (markdown allowed).
+                type: string
+                minLength: 1
+
+              details:
+                description: Additional information about the column.
+                type: string
+
+              values:
+                description: >
+                  Allowed values for an enum column. A list when values are
+                  self-explanatory, or a map from value to label.
+                oneOf:
+                  - type: array
+                    minItems: 1
+                    uniqueItems: true
+                    items:
+                      type: [string, number, boolean]
+                  - type: object
+                    minProperties: 1
+                    additionalProperties:
+                      type: string
+
+              range:
+                description: Inclusive [min, max] for ordered columns.
+                type: array
+                prefixItems:
+                  - type: [number, string]
+                  - type: [number, string]
+                items: false
+                minItems: 2
+                maxItems: 2
+
+              examples:
+                description: Representative values from the column.
+                type: array
+                minItems: 1
+
+            allOf:
+              # `values` is required when type is enum, disallowed otherwise.
+              - if:
+                  properties:
+                    type: { const: enum }
+                  required: [type]
+                then:
+                  required: [values]
+                else:
+                  not:
+                    required: [values]
+
+              # `range` only applies to ordinal/quantity numbers, dates,
+              # datetimes.
+              - if:
+                  required: [range]
+                then:
+                  properties:
+                    type:
+                      enum:
+                        - number(ordinal)
+                        - number(quantity)
+                        - date
+                        - datetime
+                  required: [type]
+
+  # --- Relationships -------------------------------------------------------
+
+  relationships:
+    description: Join descriptors between tables.
+    type: array
+    items:
+      type: object
+      additionalProperties: false
+      required: [description, cardinality, join]
+      properties:
+        description:
+          description: Human-readable description of the relationship.
+          type: string
+          minLength: 1
+        cardinality:
+          description: >
+            Cardinality from the left table to the right table in the join
+            expression.
+          enum: [one-to-one, one-to-many, many-to-one]
+        join:
+          description: >
+            Join expression, e.g. `table1.col = table2.col` or a compound
+            expression with AND.
+          type: string
+          minLength: 1
+        conflicts:
+          description: >
+            Column names that appear in both tables with different meanings.
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+
+  # --- Glossary ------------------------------------------------------------
+
+  glossary:
+    description: Map from domain-specific term to plain-language definition.
+    type: object
+    minProperties: 1
+    additionalProperties:
+      type: string
+      minLength: 1
