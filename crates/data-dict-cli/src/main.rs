@@ -12,14 +12,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Validate a data-dict.yaml file
-    Validate { path: PathBuf },
+    /// Validate a data-dict.yaml file against the schema
+    ValidateSchema { path: PathBuf },
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
-        Command::Validate { path } => match data_dict::validate(&path) {
+        Command::ValidateSchema { path } => match data_dict::validate(&path) {
             Ok(()) => {
                 println!("{}: ok", path.display());
                 ExitCode::SUCCESS
