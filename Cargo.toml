@@ -6,7 +6,7 @@ members = ["crates/data-dict", "crates/data-dict-cli"]
 version = "0.0.1"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/gaborcsardi/data-dict.yaml"
+repository = "https://github.com/hadley/data-dict.yaml"
 
 [workspace.dependencies]
 data-dict = { path = "crates/data-dict", version = "0.0.1" }
