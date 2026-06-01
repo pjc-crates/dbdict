@@ -1,7 +1,7 @@
 //! Core library for the `data-dict.yaml` specification.
 //!
 //! Currently exposes [`validate`], which checks a file against the embedded
-//! schema for spec version 0.1 (see `schema.yaml` at the repo root).
+//! schema for spec version 0.1.0 (see `schema.yaml` at the repo root).
 
 use std::path::Path;
 use std::sync::OnceLock;

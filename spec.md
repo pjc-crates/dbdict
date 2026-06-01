@@ -1,10 +1,10 @@
 # data-dict.yaml
 
-This document describes version **0.1** of the `data-dict.yaml` specification.
+This document describes version **0.1.0** of the `data-dict.yaml` specification.
 
 A data dictionary has one required top-level key, `version`, plus three optional keys that hold the actual content:
 
-* `version` (required): the version of the `data-dict.yaml` spec this document conforms to. Currently `"0.1"`. Quote the value so it's parsed as a string, not a number.
+* `version` (required): the version of the `data-dict.yaml` spec this document conforms to. Currently `"0.1.0"`. Quote the value so it's parsed as a string, not a number.
 * [`tables`](#tables) is where the bulk of most data-dict.yaml files will be. It describes the tables and their columns.
 * [`relationships`](#relationships) describes the relationships between tables. It gives the details you need to safely create joins.
 * [`glossary`](#glossary) provides a place to define important domain-specific terms. This is a good place to write down those special words that your company loves to use.
@@ -91,9 +91,9 @@ Most columns will have one of the following three additional:
 
 #### Description & details
 
-The `description` and `details` are free text fields that humans and agents can use to jot down important notes. 
+The `description` and `details` are free text fields that humans and agents can use to jot down important notes.
 
-The `description` is required, and typically a few sentences or at most a paragraph. It's a good place to document the most important information about the column. It will be displayed in user interfaces. 
+The `description` is required, and typically a few sentences or at most a paragraph. It's a good place to document the most important information about the column. It will be displayed in user interfaces.
 
 The `details` are optional, can be any length, and is a good place to carefully record all the details of the table.
 
