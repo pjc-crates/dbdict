@@ -1,0 +1,16 @@
+---
+source: crates/data-dict/tests/validate.rs
+expression: "invalid_diagnostic(\"invalid/range-on-string-type.yaml\")"
+---
+Error: [Q-1-10] YAML Validation Failed
+    ╭─[ invalid/range-on-string-type.yaml:12:9 ]
+    │
+ 12 │ ╭─▶       - name: c
+    ┆ ┆   
+ 15 │ ├─▶         range: ["a", "z"]
+    │ │                               
+    │ ╰─────────────────────────────── Missing required property 'values'
+────╯
+✖ At document path: `tables.t.columns.[0]`
+ℹ Schema constraint: object > object > object > array > anyOf > object
+ℹ Add the `values` property to your YAML document?

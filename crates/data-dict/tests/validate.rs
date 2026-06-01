@@ -33,12 +33,69 @@ fn assert_valid(path: PathBuf) {
     }
 }
 
-fn assert_invalid(path: PathBuf) {
-    assert!(
-        data_dict::validate(&path).is_err(),
-        "expected {} to fail validation, but it passed",
-        path.display(),
+/// Validate a fixture that must fail, returning the rendered diagnostic with
+/// machine-specific noise stripped so it can be snapshotted.
+///
+/// The diagnostic carries two unstable bits: terminal styling (ANSI color
+/// escapes and OSC-8 hyperlinks, the latter embedding an absolute `file://`
+/// URL) and the absolute on-disk path of the fixture. We strip the escapes and
+/// rewrite the path to its `tests/fixtures/`-relative form.
+fn invalid_diagnostic(rel: &str) -> String {
+    let path = fixture(rel);
+    let diagnostic = match data_dict::validate(&path) {
+        Ok(()) => panic!("expected {rel} to fail validation, but it passed"),
+        Err(e) => e.to_string(),
+    };
+    let fixtures_root = format!(
+        "{}/",
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .display()
     );
+    strip_terminal_escapes(&diagnostic).replace(&fixtures_root, "")
+}
+
+/// Remove ANSI SGR sequences (`ESC [ ... m`) and OSC-8 hyperlink wrappers
+/// (`ESC ] 8 ; ; ... BEL|ST`) while leaving the visible text intact.
+fn strip_terminal_escapes(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() {
+            match bytes[i + 1] {
+                b'[' => {
+                    // CSI: run until a final byte in 0x40..=0x7e.
+                    i += 2;
+                    while i < bytes.len() && !(0x40..=0x7e).contains(&bytes[i]) {
+                        i += 1;
+                    }
+                    i += 1; // consume the final byte
+                }
+                b']' => {
+                    // OSC: run until BEL or ST (ESC \).
+                    i += 2;
+                    while i < bytes.len() {
+                        if bytes[i] == 0x07 {
+                            i += 1;
+                            break;
+                        }
+                        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                            i += 2;
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                _ => i += 2,
+            }
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).expect("stripping ASCII escapes preserves UTF-8")
 }
 
 // --- valid fixtures ------------------------------------------------------
@@ -65,32 +122,38 @@ fn example_elevators() {
 
 // --- invalid fixtures ----------------------------------------------------
 
+// Each invalid fixture snapshots its rendered diagnostic, so the test guards
+// both that validation fails *and* that the user-facing message stays stable.
+// Regenerate snapshots after an intentional message change with:
+//
+//     INSTA_UPDATE=always cargo test -p data-dict
+
 #[test]
 fn missing_version() {
-    assert_invalid(fixture("invalid/missing-version.yaml"));
+    insta::assert_snapshot!(invalid_diagnostic("invalid/missing-version.yaml"));
 }
 
 #[test]
 fn unknown_top_level_key() {
-    assert_invalid(fixture("invalid/unknown-top-level-key.yaml"));
+    insta::assert_snapshot!(invalid_diagnostic("invalid/unknown-top-level-key.yaml"));
 }
 
 #[test]
 fn enum_without_values() {
-    assert_invalid(fixture("invalid/enum-without-values.yaml"));
+    insta::assert_snapshot!(invalid_diagnostic("invalid/enum-without-values.yaml"));
 }
 
 #[test]
 fn range_on_string_type() {
-    assert_invalid(fixture("invalid/range-on-string-type.yaml"));
+    insta::assert_snapshot!(invalid_diagnostic("invalid/range-on-string-type.yaml"));
 }
 
 #[test]
 fn bad_cardinality() {
-    assert_invalid(fixture("invalid/bad-cardinality.yaml"));
+    insta::assert_snapshot!(invalid_diagnostic("invalid/bad-cardinality.yaml"));
 }
 
 #[test]
 fn non_string_glossary_value() {
-    assert_invalid(fixture("invalid/non-string-glossary-value.yaml"));
+    insta::assert_snapshot!(invalid_diagnostic("invalid/non-string-glossary-value.yaml"));
 }

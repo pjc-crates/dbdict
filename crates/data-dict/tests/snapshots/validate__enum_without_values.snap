@@ -1,0 +1,16 @@
+---
+source: crates/data-dict/tests/validate.rs
+expression: "invalid_diagnostic(\"invalid/enum-without-values.yaml\")"
+---
+Error: [Q-1-10] YAML Validation Failed
+    ╭─[ invalid/enum-without-values.yaml:11:9 ]
+    │
+ 11 │ ╭─▶       - name: c
+    ┆ ┆   
+ 13 │ ├─▶         description: A column.
+    │ │                                    
+    │ ╰──────────────────────────────────── Missing required property 'values'
+────╯
+✖ At document path: `tables.t.columns.[0]`
+ℹ Schema constraint: object > object > object > array > anyOf > object
+ℹ Add the `values` property to your YAML document?
