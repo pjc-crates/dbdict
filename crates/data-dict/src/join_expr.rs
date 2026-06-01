@@ -303,4 +303,124 @@ mod tests {
         let rhs = &j.conjuncts[0].rhs;
         assert_eq!(&s[rhs.start..rhs.end], "food_nutrient.fdc_id");
     }
+
+    #[test]
+    fn all_operators_parse() {
+        let cases = [
+            ("a.x = b.y", JoinOp::Eq),
+            ("a.x == b.y", JoinOp::Eq),
+            ("a.x >= b.y", JoinOp::Ge),
+            ("a.x <= b.y", JoinOp::Le),
+            ("a.x > b.y", JoinOp::Gt),
+            ("a.x < b.y", JoinOp::Lt),
+        ];
+        for (s, op) in cases {
+            let j = parse(s);
+            assert_eq!(j.conjuncts[0].op, op, "operator mismatch for {s:?}");
+        }
+    }
+
+    #[test]
+    fn two_char_operators_are_not_split() {
+        // `>=` must win over `>`, otherwise the trailing `=` would be left for
+        // the rhs qcol parse and the operator would be wrong.
+        assert_eq!(parse("a.x >= b.y").conjuncts[0].op, JoinOp::Ge);
+        assert_eq!(parse("a.x <= b.y").conjuncts[0].op, JoinOp::Le);
+    }
+
+    #[test]
+    fn whitespace_around_operator_is_optional() {
+        let j = parse("a.x=b.y");
+        assert_eq!(j.conjuncts.len(), 1);
+        assert_eq!(j.conjuncts[0].lhs.column, "x");
+        assert_eq!(j.conjuncts[0].op, JoinOp::Eq);
+        assert_eq!(j.conjuncts[0].rhs.column, "y");
+    }
+
+    #[test]
+    fn three_conjuncts() {
+        let j = parse("a.x = b.y AND c.z = d.w AND e.p = f.q");
+        assert_eq!(j.conjuncts.len(), 3);
+        assert_eq!(j.tables(), vec!["a", "b", "c", "d", "e", "f"]);
+    }
+
+    #[test]
+    fn tables_dedup_in_first_appearance_order() {
+        // `b` and `a` reappear in the second conjunct but must not be repeated.
+        let j = parse("a.x = b.y AND b.z = a.w");
+        assert_eq!(j.tables(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn qcols_yields_all_refs_in_source_order() {
+        let j = parse("a.x = b.y AND c.z = d.w");
+        let cols: Vec<(&str, &str)> =
+            j.qcols().map(|q| (q.table.as_str(), q.column.as_str())).collect();
+        assert_eq!(
+            cols,
+            vec![("a", "x"), ("b", "y"), ("c", "z"), ("d", "w")]
+        );
+    }
+
+    #[test]
+    fn identifiers_may_contain_digits_underscores_and_leading_underscore() {
+        let j = parse("_t1.col_2 = T_3.x9");
+        assert_eq!(j.conjuncts[0].lhs.table, "_t1");
+        assert_eq!(j.conjuncts[0].lhs.column, "col_2");
+        assert_eq!(j.conjuncts[0].rhs.table, "T_3");
+        assert_eq!(j.conjuncts[0].rhs.column, "x9");
+    }
+
+    #[test]
+    fn rejects_empty_input() {
+        let err = JoinExpr::parse("").unwrap_err();
+        assert!(err.message.contains("identifier"));
+        assert_eq!(err.at, 0);
+    }
+
+    #[test]
+    fn rejects_whitespace_only_input() {
+        let err = JoinExpr::parse("   ").unwrap_err();
+        assert!(err.message.contains("identifier"));
+    }
+
+    #[test]
+    fn rejects_identifier_starting_with_digit() {
+        let err = JoinExpr::parse("1a.x = b.y").unwrap_err();
+        assert!(err.message.contains("identifier"));
+    }
+
+    #[test]
+    fn rejects_missing_column_after_dot() {
+        let err = JoinExpr::parse("a. = b.y").unwrap_err();
+        assert!(err.message.contains("identifier"));
+    }
+
+    #[test]
+    fn rejects_missing_operator() {
+        // After the lhs qcol the parser expects an operator, not another qcol.
+        let err = JoinExpr::parse("a.x b.y").unwrap_err();
+        assert!(err.message.contains('='));
+    }
+
+    #[test]
+    fn rejects_missing_rhs() {
+        let err = JoinExpr::parse("a.x =").unwrap_err();
+        assert!(err.message.contains("identifier"));
+    }
+
+    #[test]
+    fn rejects_two_conjuncts_without_and() {
+        // A second conjunct must be separated by `AND`; bare juxtaposition is
+        // an error pointing at the missing keyword.
+        let err = JoinExpr::parse("a.x = b.y c.z = d.w").unwrap_err();
+        assert!(err.message.contains("AND"));
+    }
+
+    #[test]
+    fn error_offset_points_at_failing_token() {
+        // The unknown operator sits at byte 4.
+        let err = JoinExpr::parse("a.x ~ b.y").unwrap_err();
+        assert_eq!(err.at, 4);
+    }
 }
