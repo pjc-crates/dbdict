@@ -33,6 +33,21 @@ fn assert_valid(path: PathBuf) {
     }
 }
 
+fn assert_invalid(path: PathBuf, expected: &[&str]) {
+    let err = data_dict::validate(&path)
+        .err()
+        .unwrap_or_else(|| panic!("expected {} to fail validation, but it passed", path.display()));
+    let text = err.to_string();
+    for s in expected {
+        assert!(
+            text.contains(s),
+            "expected {:?} in diagnostic for {}, got:\n{text}",
+            s,
+            path.display(),
+        );
+    }
+}
+
 /// Validate a fixture that must fail, returning the rendered diagnostic with
 /// machine-specific noise stripped so it can be snapshotted.
 ///
@@ -52,8 +67,11 @@ fn invalid_diagnostic(rel: &str) -> String {
             .join("tests")
             .join("fixtures")
             .display()
-    );
-    strip_terminal_escapes(&diagnostic).replace(&fixtures_root, "")
+    )
+    .replace('\\', "/");
+    strip_terminal_escapes(&diagnostic)
+        .replace('\\', "/")
+        .replace(&fixtures_root, "")
 }
 
 /// Remove ANSI SGR sequences (`ESC [ ... m`) and OSC-8 hyperlink wrappers
@@ -122,38 +140,98 @@ fn example_elevators() {
 
 // --- invalid fixtures ----------------------------------------------------
 
-// Each invalid fixture snapshots its rendered diagnostic, so the test guards
-// both that validation fails *and* that the user-facing message stays stable.
-// Regenerate snapshots after an intentional message change with:
+// Each invalid fixture is tested at two levels:
 //
-//     INSTA_UPDATE=always cargo test -p data-dict
+// 1. A snapshot test (Unix only) that guards the exact rendered diagnostic,
+//    including formatting. Gated to Unix because the upstream renderer measures
+//    Unicode box-drawing characters differently on Windows, shifting pointer
+//    arrows by one column.  Regenerate after intentional message changes with:
+//
+//        INSTA_UPDATE=always cargo test -p data-dict
+//
+// 2. A cross-platform test that verifies the right error is reported on all
+//    platforms by checking for key phrases in the diagnostic text.
 
 #[test]
+#[cfg(unix)]
 fn missing_version() {
     insta::assert_snapshot!(invalid_diagnostic("invalid/missing-version.yaml"));
 }
 
 #[test]
+fn missing_version_errors() {
+    assert_invalid(
+        fixture("invalid/missing-version.yaml"),
+        &["Missing required property 'version'"],
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn unknown_top_level_key() {
     insta::assert_snapshot!(invalid_diagnostic("invalid/unknown-top-level-key.yaml"));
 }
 
 #[test]
+fn unknown_top_level_key_errors() {
+    assert_invalid(
+        fixture("invalid/unknown-top-level-key.yaml"),
+        &["Unknown property 'bogus'"],
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn enum_without_values() {
     insta::assert_snapshot!(invalid_diagnostic("invalid/enum-without-values.yaml"));
 }
 
 #[test]
+fn enum_without_values_errors() {
+    assert_invalid(
+        fixture("invalid/enum-without-values.yaml"),
+        &["Missing required property 'values'"],
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn range_on_string_type() {
     insta::assert_snapshot!(invalid_diagnostic("invalid/range-on-string-type.yaml"));
 }
 
 #[test]
+fn range_on_string_type_errors() {
+    assert_invalid(
+        fixture("invalid/range-on-string-type.yaml"),
+        &["Missing required property 'values'"],
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn bad_cardinality() {
     insta::assert_snapshot!(invalid_diagnostic("invalid/bad-cardinality.yaml"));
 }
 
 #[test]
+fn bad_cardinality_errors() {
+    assert_invalid(
+        fixture("invalid/bad-cardinality.yaml"),
+        &["many-to-many"],
+    );
+}
+
+#[test]
+#[cfg(unix)]
 fn non_string_glossary_value() {
     insta::assert_snapshot!(invalid_diagnostic("invalid/non-string-glossary-value.yaml"));
+}
+
+#[test]
+fn non_string_glossary_value_errors() {
+    assert_invalid(
+        fixture("invalid/non-string-glossary-value.yaml"),
+        &["Expected string"],
+    );
 }
