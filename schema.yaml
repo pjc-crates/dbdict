@@ -37,7 +37,7 @@ object:
         additionalProperties:
           object:
             closed: true
-            required: [description, source, columns]
+            required: [source, columns]
             properties:
 
               description: string

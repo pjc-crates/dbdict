@@ -49,13 +49,14 @@ fn assert_invalid(path: PathBuf, expected: &[&str]) {
 }
 
 /// Validate a fixture that must fail, returning the rendered diagnostic with
-/// machine-specific noise stripped so it can be snapshotted.
+/// machine-specific noise stripped so it can be snapshotted. Used for both
+/// schema-`invalid/` and `lint/` fixtures — any document expected to error.
 ///
 /// The diagnostic carries two unstable bits: terminal styling (ANSI color
 /// escapes and OSC-8 hyperlinks, the latter embedding an absolute `file://`
 /// URL) and the absolute on-disk path of the fixture. We strip the escapes and
 /// rewrite the path to its `tests/fixtures/`-relative form.
-fn invalid_diagnostic(rel: &str) -> String {
+fn failing_diagnostic(rel: &str) -> String {
     let path = fixture(rel);
     let diagnostic = match data_dict::validate(&path) {
         Ok(()) => panic!("expected {rel} to fail validation, but it passed"),
@@ -116,6 +117,24 @@ fn strip_terminal_escapes(s: &str) -> String {
     String::from_utf8(out).expect("stripping ASCII escapes preserves UTF-8")
 }
 
+/// Assert that `validate` returns `Err` whose rendered text contains every
+/// expected diagnostic code. Used for bundled examples that exhibit a known
+/// lint finding we can't fix locally (examples/ is overwritten on each
+/// sync).
+fn assert_lint_codes(path: PathBuf, codes: &[&str]) {
+    let err = data_dict::validate(&path)
+        .err()
+        .unwrap_or_else(|| panic!("expected {} to fail lint, but it passed", path.display()));
+    let text = err.to_string();
+    for code in codes {
+        assert!(
+            text.contains(code),
+            "expected diagnostic `{code}` in output for {}, got:\n{text}",
+            path.display(),
+        );
+    }
+}
+
 // --- valid fixtures ------------------------------------------------------
 
 #[test]
@@ -124,18 +143,39 @@ fn minimal() {
 }
 
 #[test]
-fn example_foodbank() {
-    assert_valid(workspace_root().join("examples/foodbank.yaml"));
-}
-
-#[test]
-fn example_otters() {
-    assert_valid(workspace_root().join("examples/otters.yaml"));
-}
-
-#[test]
 fn example_elevators() {
+    // Single table, no relationships — passes both structural and lint
+    // checks.
     assert_valid(workspace_root().join("examples/elevators.yaml"));
+}
+
+// --- bundled examples with known upstream lint findings ------------------
+//
+// foodbank lists `data_points` and `amount` as `conflicts` between `food` and
+// `food_nutrient`, but neither column exists in `food` (they only appear in
+// `food_nutrient` and `food_portion`). The spec says `conflicts` must name
+// columns that appear in BOTH tables on either side of the join, so the
+// linter reports DD005. The fix belongs upstream in foodbank/data-dict.yaml.
+
+#[test]
+fn example_foodbank_has_dd005() {
+    assert_lint_codes(
+        workspace_root().join("examples/foodbank.yaml"),
+        &["DD005"],
+    );
+}
+
+// otters' self-join is `cardinality: one-to-many, join: otters.pup_number =
+// otters.otter_no`. With the spec's "left is the one side" interpretation,
+// `pup_number` would need to be `primary_key` or `unique`. It is not, so the
+// linter reports DD006. The example author likely meant `many-to-one`.
+
+#[test]
+fn example_otters_has_dd006() {
+    assert_lint_codes(
+        workspace_root().join("examples/otters.yaml"),
+        &["DD006"],
+    );
 }
 
 // --- invalid fixtures ----------------------------------------------------
@@ -155,7 +195,7 @@ fn example_elevators() {
 #[test]
 #[cfg(unix)]
 fn missing_version() {
-    insta::assert_snapshot!(invalid_diagnostic("invalid/missing-version.yaml"));
+    insta::assert_snapshot!(failing_diagnostic("invalid/missing-version.yaml"));
 }
 
 #[test]
@@ -169,7 +209,7 @@ fn missing_version_errors() {
 #[test]
 #[cfg(unix)]
 fn unknown_top_level_key() {
-    insta::assert_snapshot!(invalid_diagnostic("invalid/unknown-top-level-key.yaml"));
+    insta::assert_snapshot!(failing_diagnostic("invalid/unknown-top-level-key.yaml"));
 }
 
 #[test]
@@ -183,7 +223,7 @@ fn unknown_top_level_key_errors() {
 #[test]
 #[cfg(unix)]
 fn enum_without_values() {
-    insta::assert_snapshot!(invalid_diagnostic("invalid/enum-without-values.yaml"));
+    insta::assert_snapshot!(failing_diagnostic("invalid/enum-without-values.yaml"));
 }
 
 #[test]
@@ -197,7 +237,7 @@ fn enum_without_values_errors() {
 #[test]
 #[cfg(unix)]
 fn range_on_string_type() {
-    insta::assert_snapshot!(invalid_diagnostic("invalid/range-on-string-type.yaml"));
+    insta::assert_snapshot!(failing_diagnostic("invalid/range-on-string-type.yaml"));
 }
 
 #[test]
@@ -211,7 +251,7 @@ fn range_on_string_type_errors() {
 #[test]
 #[cfg(unix)]
 fn bad_cardinality() {
-    insta::assert_snapshot!(invalid_diagnostic("invalid/bad-cardinality.yaml"));
+    insta::assert_snapshot!(failing_diagnostic("invalid/bad-cardinality.yaml"));
 }
 
 #[test]
@@ -225,7 +265,7 @@ fn bad_cardinality_errors() {
 #[test]
 #[cfg(unix)]
 fn non_string_glossary_value() {
-    insta::assert_snapshot!(invalid_diagnostic("invalid/non-string-glossary-value.yaml"));
+    insta::assert_snapshot!(failing_diagnostic("invalid/non-string-glossary-value.yaml"));
 }
 
 #[test]
@@ -234,4 +274,55 @@ fn non_string_glossary_value_errors() {
         fixture("invalid/non-string-glossary-value.yaml"),
         &["Expected string"],
     );
+}
+
+// --- lint fixtures -------------------------------------------------------
+
+#[test]
+fn lint_clean_two_tables() {
+    assert_valid(fixture("lint/clean-two-tables.yaml"));
+}
+
+// Each local lint fixture snapshots its full rendered diagnostic. Snapshotting
+// the whole output (rather than asserting a single code is present) guards the
+// exact set of findings — e.g. that `dd003-missing-column` reports the missing
+// column without *also* checking cardinality against it and emitting a
+// redundant DD006.
+
+#[test]
+fn lint_dd001_fk_no_relationship() {
+    insta::assert_snapshot!(failing_diagnostic("lint/dd001-fk-no-relationship.yaml"));
+}
+
+#[test]
+fn lint_dd002_missing_table() {
+    insta::assert_snapshot!(failing_diagnostic("lint/dd002-missing-table.yaml"));
+}
+
+#[test]
+fn lint_dd003_missing_column() {
+    insta::assert_snapshot!(failing_diagnostic("lint/dd003-missing-column.yaml"));
+}
+
+#[test]
+fn lint_dd004_bad_join() {
+    insta::assert_snapshot!(failing_diagnostic("lint/dd004-bad-join.yaml"));
+}
+
+#[test]
+fn lint_dd005_conflicts_not_on_both_sides() {
+    insta::assert_snapshot!(failing_diagnostic("lint/dd005-conflicts-not-on-both-sides.yaml"));
+}
+
+// The opposite of the above: `amount` is genuinely a column on both tables (a
+// real conflict) but is not declared in `conflicts`. DD005 only checks declared
+// entries, so this must lint clean rather than demanding the conflict be named.
+#[test]
+fn lint_dd005_undeclared_conflict_ok() {
+    assert_valid(fixture("lint/dd005-undeclared-conflict-ok.yaml"));
+}
+
+#[test]
+fn lint_dd006_cardinality_mismatch() {
+    insta::assert_snapshot!(failing_diagnostic("lint/dd006-cardinality-mismatch.yaml"));
 }

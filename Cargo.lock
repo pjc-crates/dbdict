@@ -156,7 +156,9 @@ dependencies = [
 name = "data-dict"
 version = "0.0.1"
 dependencies = [
+ "indexmap",
  "insta",
+ "quarto-error-reporting",
  "quarto-source-map",
  "quarto-yaml",
  "quarto-yaml-validation",

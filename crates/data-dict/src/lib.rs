@@ -1,13 +1,26 @@
 //! Core library for the `data-dict.yaml` specification.
 //!
-//! Currently exposes [`validate`], which checks a file against the embedded
-//! schema for spec version 0.1.0 (see `schema.yaml` at the repo root).
+//! [`validate`] runs two passes on a document:
+//!
+//! 1. Structural validation against the embedded `schema.yaml` for spec
+//!    version 0.1.0, via the `quarto-yaml-validation` crate.
+//! 2. Cross-table semantic linting (see [`lint`]) — foreign-key targets,
+//!    `join` expression parsing, `conflicts` column resolution, cardinality
+//!    consistency.
+//!
+//! The second pass only runs if the first succeeds: there is no point
+//! chasing FK references in a document whose `tables` block is malformed.
 
 use std::path::Path;
 use std::sync::OnceLock;
 
 use quarto_source_map::SourceContext;
 use quarto_yaml_validation::{Schema, SchemaRegistry, ValidationDiagnostic};
+
+pub mod join_expr;
+pub mod lint;
+pub mod lower;
+pub mod model;
 
 const SCHEMA_YAML: &str = include_str!("../../../schema.yaml");
 
@@ -28,8 +41,9 @@ pub enum Error {
     Io(std::io::Error),
     /// The document is not parseable as YAML.
     Parse(quarto_yaml::Error),
-    /// The document parses but does not conform to the schema. The string is a
-    /// rendered, human-readable diagnostic with source location highlighting.
+    /// The document failed structural and/or semantic validation. The string
+    /// is a rendered, human-readable report covering every diagnostic, with
+    /// source-location highlighting.
     Invalid(String),
 }
 
@@ -53,7 +67,8 @@ impl std::error::Error for Error {
     }
 }
 
-/// Validate a `data-dict.yaml` file at `path` against the embedded schema.
+/// Validate a `data-dict.yaml` file at `path`: structural schema check
+/// followed by cross-table semantic linting.
 pub fn validate(path: &Path) -> Result<(), Error> {
     let content = std::fs::read_to_string(path).map_err(Error::Io)?;
     let filename = path.display().to_string();
@@ -65,13 +80,22 @@ pub fn validate(path: &Path) -> Result<(), Error> {
     source_ctx.add_file_with_id(file_id, filename, Some(content));
 
     let registry = SchemaRegistry::new();
-    match quarto_yaml_validation::validate(&doc, schema(), &registry, &source_ctx) {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            let diagnostic = ValidationDiagnostic::from_validation_error(&err, &source_ctx);
-            Err(Error::Invalid(diagnostic.to_text(&source_ctx)))
-        }
+    if let Err(err) = quarto_yaml_validation::validate(&doc, schema(), &registry, &source_ctx) {
+        let diagnostic = ValidationDiagnostic::from_validation_error(&err, &source_ctx);
+        return Err(Error::Invalid(diagnostic.to_text(&source_ctx)));
     }
+
+    let (dict, mut diagnostics) = lower::lower(&doc);
+    diagnostics.extend(lint::lint(&dict));
+    if !diagnostics.is_empty() {
+        let rendered: Vec<String> = diagnostics
+            .iter()
+            .map(|d| d.to_text(&source_ctx))
+            .collect();
+        return Err(Error::Invalid(rendered.join("\n")));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
