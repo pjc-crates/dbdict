@@ -121,12 +121,13 @@ tables:
         examples: [OTIS, HOUSING AUTHORITY, PRIVATE RESIDENCE, MRL ELEVATOR, STALEY]
 
       - name: dv_travel_distance
-        type: string
+        type: number(quantity)
+        range: [0, 1300]
         description: >
-          Vertical travel distance of the device. Often omitted, and when
-          present the units and format are highly inconsistent: may be in
-          feet, feet-and-inches, or other notations. Use with caution.
-        examples: ["14'", "24 FT", "16'4\"", "73-10", "410"]
+          Vertical travel distance of the device in feet. Often omitted
+          (~62% missing). Parsed from highly inconsistent raw strings.
+          See travel-distance.qmd for details.
+        examples: [14, 24, 16.33, 73.83, 410]
 
       - name: dv_speed_fpm
         type: number(quantity)
@@ -186,17 +187,21 @@ tables:
       - name: dv_floor_from
         type: string
         description: >
-          Lowest floor served by the device. May be a number (`1`), a
-          letter code (`B` for basement, `C` for cellar, `SB` for
-          sub-basement), or other notations.
-        examples: [B, "1", C, SB, L]
+          Lowest floor served by the device. May be an integer (`1`), a
+          standard letter code (`B` basement, `C` cellar, `L` lobby,
+          `G` ground, `M` mezzanine, `SB` sub-basement, `SC`
+          sub-cellar), or a comma-separated pair indicating two lobby
+          entry levels (e.g. `B,1`). See floor.qmd for details.
+        examples: [B, "1", C, SB, "B,1"]
 
       - name: dv_floor_to
         type: string
         description: >
-          Highest floor served by the device. May be a number or a
-          letter code.
-        examples: ["2", "6", "12", PH, R]
+          Highest floor served by the device. Uses the same notation as
+          `dv_floor_from`. Common letter codes include `PH` (penthouse),
+          `R` (roof), `T` (top), and `ST` (street). Subject to the same
+          cleaning as `dv_floor_from`.
+        examples: ["6", "12", PH, R, ST]
 
       - name: latitude
         type: number(quantity)
