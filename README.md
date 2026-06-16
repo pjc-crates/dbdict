@@ -27,7 +27,8 @@ project.
 The `data-dict` CLI validates dictionaries. It can:
 
 * Check that a file is structurally valid and internally consistent
-  (`validate-schema`).
+  (`validate-schema`). Pass a file, or a directory containing a
+  `data-dict.yaml` (defaults to the current directory).
 * Compare a dictionary against a real Parquet file to confirm the data matches
   what the dictionary claims (`parquet validate`).
 * Print the column types of a Parquet file (`parquet types`).
@@ -54,22 +55,19 @@ cargo build --workspace --release
 
 ### Usage
 
-```bash
-# Validate a dictionary against the spec
-data-dict validate-schema site/examples/otters.yaml
+Run `data-dict` with no arguments to see the usage:
 
-# Validate a dictionary against a parquet file
-data-dict parquet validate dict.yaml data/food.parquet --table food
+```
+Usage: data-dict <COMMAND>
 
-# Inspect a parquet file's column types
-data-dict parquet types data/food.parquet
-
-# Print an agent skill (e.g. save it to .claude/skills/ for Claude Code)
-data-dict skill read
-data-dict skill write
-
-# Print the specification
-data-dict spec
+Commands:
+  validate-schema   Validate a data-dict.yaml file or directory against the schema [default: .]
+  spec              Print the data-dict.yaml specification
+  parquet types     Print column types for a parquet file
+  parquet validate  Validate a parquet file's columns against a data dictionary
+  skill read        Skill for reading and understanding a data dictionary
+  skill write       Skill for creating or updating a data dictionary
+  help              Print this message or the help of the given subcommand(s)
 ```
 
 ## Development
