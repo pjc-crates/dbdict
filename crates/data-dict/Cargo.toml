@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+data-dict-parquet.workspace = true
 quarto-yaml-validation.workspace = true
 quarto-yaml = { git = "https://github.com/quarto-dev/q2", branch = "main" }
 quarto-source-map = { git = "https://github.com/quarto-dev/q2", branch = "main" }
@@ -15,3 +16,4 @@ indexmap = "2"
 
 [dev-dependencies]
 insta = "1"
+parquet.workspace = true

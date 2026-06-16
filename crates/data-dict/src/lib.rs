@@ -17,10 +17,13 @@ use std::sync::OnceLock;
 use quarto_source_map::SourceContext;
 use quarto_yaml_validation::{Schema, SchemaRegistry, ValidationDiagnostic};
 
+pub mod data;
 pub mod join_expr;
 pub mod lint;
 pub mod lower;
 pub mod model;
+
+use model::DataDict;
 
 const SCHEMA_YAML: &str = include_str!("../../../schema.yaml");
 
@@ -70,6 +73,14 @@ impl std::error::Error for Error {
 /// Validate a `data-dict.yaml` file at `path`: structural schema check
 /// followed by cross-table semantic linting.
 pub fn validate(path: &Path) -> Result<(), Error> {
+    validate_and_lower(path).map(|_| ())
+}
+
+/// Validate a `data-dict.yaml` file at `path` and return the lowered
+/// [`DataDict`] model. Runs the same two passes as [`validate`] — structural
+/// schema check then cross-table semantic linting — and only returns the model
+/// when both succeed.
+pub fn validate_and_lower(path: &Path) -> Result<DataDict, Error> {
     let content = std::fs::read_to_string(path).map_err(Error::Io)?;
     let filename = path.display().to_string();
 
@@ -95,7 +106,7 @@ pub fn validate(path: &Path) -> Result<(), Error> {
         return Err(Error::Invalid(rendered.join("\n")));
     }
 
-    Ok(())
+    Ok(dict)
 }
 
 #[cfg(test)]
