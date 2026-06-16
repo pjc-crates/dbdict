@@ -10,6 +10,11 @@ The repo contains:
 - `crates/`: Rust workspace (see crate architecture below)
 - `schema.yaml`: JSON Schema for structural validation of data dictionary files
 
+## Code principles
+
+* Reserve comments for explaining why, not what or how.
+* User facing code should be accompanied by a test.
+
 ## Spec and implementation must stay in sync
 
 The spec (`site/spec.md`) and the implementation (the crates + `schema.yaml`) are two views of the same thing and must never drift apart.
