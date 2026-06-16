@@ -4,12 +4,19 @@
 
 The repo contains:
 
-- `spec.md`: the full specification (v0.1.0)
-- `examples/`: example data dictionaries downloaded from other repos (see `download-examples.R`). Do not edit these directly — they are overwritten on each sync. When spec changes affect example documents, note that examples will need to be re-synced from their source repos.
-- `README.md`: project overview and motivation
-- `rust-cli-design.md`: architectural decisions and rationale
+- `site/spec.md`: the full specification (v0.1.0)
+- `README.md`: project overview, CLI install/build instructions, and a pointer to the site.
+- `site/`: the [Quarto](https://quarto.org) website published to data-dict.tidyverse.org. Holds the spec and design docs (`spec.md`, `semantic-models.md`), as well as example data dictionaries downloaded from other repos (see `download-examples.R`). Built and deployed by `.github/workflows/publish-site.yaml`.
 - `crates/`: Rust workspace (see crate architecture below)
 - `schema.yaml`: JSON Schema for structural validation of data dictionary files
+
+## Spec and implementation must stay in sync
+
+The spec (`site/spec.md`) and the implementation (the crates + `schema.yaml`) are two views of the same thing and must never drift apart.
+
+- **New features start in the spec.** Propose and iterate on any new feature in `site/spec.md` first. Implement it only once you've confirmed with a human that the spec is correct.
+- **Implementation refinements flow back to the spec.** If you discover during implementation that the spec is wrong, incomplete, or ambiguous, update `site/spec.md` to match what you actually built.
+- **Touch one, check the other.** Whenever you change the spec, double-check the implementation still matches; whenever you change the implementation, update the spec. A change to either is incomplete until both agree.
 
 ## Commands
 
@@ -24,7 +31,7 @@ cargo test -p data-dict                 # single crate
 cargo test -p data-dict lint            # tests matching "lint" in data-dict crate
 
 # Validate a file
-cargo run -p data-dict-cli -- validate-schema examples/otters.yaml
+cargo run -p data-dict-cli -- validate-schema site/examples/otters.yaml
 ```
 
 To review/accept insta snapshots: `cargo insta review`.
@@ -34,7 +41,7 @@ To review/accept insta snapshots: `cargo insta review`.
 Rust workspace with three crates:
 
 - `crates/data-dict/` — core library: YAML parsing, schema validation, lowering to typed model, and semantic linting. All logic lives here.
-- `crates/data-dict-cli/` — thin CLI wrapper (single command: `validate-schema`). Keep it thin.
+- `crates/data-dict-cli/` — thin CLI wrapper (`validate-schema`, plus `parquet types` / `parquet validate`). Keep it thin.
 - `crates/data-dict-parquet/` — reads Parquet file schemas and maps column types to data-dict types.
 
 ### Schema validation pipeline
