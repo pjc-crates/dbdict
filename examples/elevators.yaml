@@ -1,5 +1,7 @@
 # source: https://github.com/hadley/elevators
 
+version: 0.1.0
+
 tables:
   elevators:
     description: >
@@ -91,6 +93,7 @@ tables:
 
       - name: dv_lastper_insp_date
         type: date
+        range: [1988-08-19, 2015-10-13]
         description: >
           Date of the last periodic inspection by the NYC Department of
           Buildings. May be missing if the device has never been inspected.
@@ -106,6 +109,7 @@ tables:
 
       - name: dv_approval_date
         type: date
+        range: [1925-02-24, 2015-10-16]
         description: >
           Date the device was approved. Typically reflects when the device
           was first registered or last had a major approval action.
@@ -127,7 +131,6 @@ tables:
           Vertical travel distance of the device in feet. Often omitted
           (~62% missing). Parsed from highly inconsistent raw strings.
           See travel-distance.qmd for details.
-        examples: [14, 24, 16.33, 73.83, 410]
 
       - name: dv_speed_fpm
         type: number(quantity)
@@ -181,6 +184,7 @@ tables:
 
       - name: dv_status_date
         type: date
+        range: [1940-07-18, 2015-10-17]
         description: >
           Date when the device status was last updated.
 

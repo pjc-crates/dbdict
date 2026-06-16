@@ -1,5 +1,6 @@
 # source: https://github.com/hadley/loan-application
 
+version: 0.1.0
 tables:
   account:
     description: >
@@ -19,16 +20,18 @@ tables:
         description: District where the account's branch is located.
         examples: [1, 20, 39, 58, 77]
       - name: frequency
-        type: enum<POPLATEK MESICNE, POPLATEK TYDNE, POPLATEK PO OBRATU>
+        type: enum
+        values:
+          POPLATEK MESICNE: Monthly
+          POPLATEK TYDNE: Weekly
+          POPLATEK PO OBRATU: After each transaction
         constraints: [required]
-        description: >
-          Frequency of statement issuance. "POPLATEK MESICNE" = monthly,
-          "POPLATEK TYDNE" = weekly, "POPLATEK PO OBRATU" = after each
-          transaction.
+        description: Frequency of statement issuance.
       - name: date
         type: date
         constraints: [required]
         description: Date the account was created.
+        range: [1993-01-01, 1997-12-29]
 
   client:
     description: >
@@ -44,13 +47,15 @@ tables:
         description: Unique identifier for the client.
         examples: [1, 1418, 2839, 4257, 13998]
       - name: gender
-        type: enum<F, M>
+        type: enum
+        values: [F, M]
         constraints: [required]
         description: Client's gender.
       - name: birth_date
         type: date
         constraints: [required]
         description: Client's date of birth.
+        range: [1911-08-20, 1987-09-27]
       - name: district_id
         type: number(id)
         constraints: [required, foreign_key]
@@ -81,12 +86,12 @@ tables:
         description: The account the client has access to.
         examples: [1, 1183, 2367, 3552, 11382]
       - name: type
-        type: enum<OWNER, DISPONENT>
+        type: enum
+        values:
+          OWNER: Full rights (can issue orders and apply for loans)
+          DISPONENT: Limited access
         constraints: [required]
-        description: >
-          Type of disposition. "OWNER" has full rights including issuing
-          permanent orders and applying for loans. "DISPONENT" has limited
-          access.
+        description: Type of disposition.
 
   order:
     description: >
@@ -119,12 +124,15 @@ tables:
         type: number(quantity)
         constraints: [required]
         description: Amount debited per payment.
+        range: [1, 14882]
       - name: k_symbol
-        type: enum<POJISTNE, SIPO, LEASING, UVER>
-        description: >
-          Characterization of the payment. "POJISTNE" = insurance payment,
-          "SIPO" = household payment, "LEASING" = leasing, "UVER" = loan
-          payment. Empty string if not specified.
+        type: enum
+        values:
+          POJISTNE: Insurance payment
+          SIPO: Household payment
+          LEASING: Leasing
+          UVER: Loan payment
+        description: Characterization of the payment. Empty string if not specified.
 
   trans:
     description: >
@@ -147,35 +155,45 @@ tables:
         type: date
         constraints: [required]
         description: Date of the transaction.
+        range: [1993-01-01, 1998-12-31]
       - name: type
-        type: enum<PRIJEM, VYDAJ, VYBER>
+        type: enum
+        values:
+          PRIJEM: Credit
+          VYDAJ: Withdrawal (debit)
+          VYBER: Withdrawal (cash)
         constraints: [required]
-        description: >
-          Transaction direction. "PRIJEM" = credit, "VYDAJ" = withdrawal
-          (debit), "VYBER" = withdrawal (cash).
+        description: Transaction direction.
       - name: operation
-        type: enum<VYBER KARTOU, VKLAD, PREVOD Z UCTU, VYBER, PREVOD NA UCET>
-        description: >
-          Mode of transaction. "VYBER KARTOU" = credit card withdrawal,
-          "VKLAD" = credit in cash, "PREVOD Z UCTU" = collection from
-          another bank, "VYBER" = cash withdrawal, "PREVOD NA UCET" =
-          remittance to another bank.
+        type: enum
+        values:
+          VYBER KARTOU: Credit card withdrawal
+          VKLAD: Credit in cash
+          PREVOD Z UCTU: Collection from another bank
+          VYBER: Cash withdrawal
+          PREVOD NA UCET: Remittance to another bank
+        description: Mode of transaction.
       - name: amount
         type: number(quantity)
         constraints: [required]
         description: Amount of money in the transaction.
+        range: [0, 87400]
       - name: balance
         type: number(quantity)
         constraints: [required]
         description: Account balance after the transaction.
+        range: [-41126, 209637]
       - name: k_symbol
-        type: enum<POJISTNE, SLUZBY, UROK, SANKC. UROK, SIPO, DUCHOD, UVER>
-        description: >
-          Characterization of the transaction. "POJISTNE" = insurance
-          payment, "SLUZBY" = payment for statement, "UROK" = interest
-          credited, "SANKC. UROK" = sanction interest (negative balance),
-          "SIPO" = household payment, "DUCHOD" = old-age pension, "UVER" =
-          loan payment. Empty string if not specified.
+        type: enum
+        values:
+          POJISTNE: Insurance payment
+          SLUZBY: Payment for statement
+          UROK: Interest credited
+          SANKC. UROK: Sanction interest (negative balance)
+          SIPO: Household payment
+          DUCHOD: Old-age pension
+          UVER: Loan payment
+        description: Characterization of the transaction. Empty string if not specified.
       - name: bank
         type: string
         description: Two-letter code identifying the partner's bank.
@@ -207,25 +225,31 @@ tables:
         type: date
         constraints: [required]
         description: Date the loan was granted.
+        range: [1993-07-05, 1998-12-08]
       - name: amount
         type: number(quantity)
         constraints: [required]
         description: Total amount of the loan.
+        range: [4980, 590820]
       - name: duration
         type: number(ordinal)
         constraints: [required]
-        description: Duration of the loan in months. Values are 12, 24, 36, 48, or 60.
+        description: Duration of the loan in months.
+        range: [12, 60]
       - name: payments
         type: number(quantity)
         constraints: [required]
         description: Monthly payment amount.
+        range: [304, 9910]
       - name: status
-        type: enum<A, B, C, D>
+        type: enum
+        values:
+          A: Contract finished, no problems
+          B: Contract finished, loan not paid
+          C: Running contract, OK so far
+          D: Running contract, client in debt
         constraints: [required]
-        description: >
-          Status of the loan. "A" = contract finished, no problems.
-          "B" = contract finished, loan not paid. "C" = running contract,
-          OK so far. "D" = running contract, client in debt.
+        description: Status of the loan.
 
   card:
     description: >
@@ -245,13 +269,15 @@ tables:
         description: Disposition linking the card to a client and account.
         examples: [9, 1388, 2929, 4457, 13660]
       - name: type
-        type: enum<junior, classic, gold>
+        type: enum
+        values: [junior, classic, gold]
         constraints: [required]
         description: Type of credit card.
       - name: issued
         type: date
         constraints: [required]
         description: Date the card was issued.
+        range: [1993-11-07, 1998-12-29]
 
   district:
     description: >
@@ -272,60 +298,72 @@ tables:
         examples: [Benesov, Hradec Kralove, Nachod, Rokycany, Znojmo]
       - name: A3
         type: enum
+        values: [Prague, central Bohemia, south Bohemia, west Bohemia, north Bohemia, east Bohemia, south Moravia, north Moravia]
         constraints: [required]
-        description: Region name (e.g. "Prague", "central Bohemia", "south Moravia").
+        description: Region name.
       - name: A4
         type: number(quantity)
         constraints: [required]
         description: Number of inhabitants.
+        range: [42821, 1204953]
       - name: A5
         type: number(quantity)
         constraints: [required]
         description: Number of municipalities with fewer than 499 inhabitants.
+        range: [0, 151]
       - name: A6
         type: number(quantity)
         constraints: [required]
         description: Number of municipalities with 500–1999 inhabitants.
+        range: [0, 70]
       - name: A7
         type: number(quantity)
         constraints: [required]
         description: Number of municipalities with 2000–9999 inhabitants.
+        range: [0, 20]
       - name: A8
         type: number(quantity)
         constraints: [required]
         description: Number of municipalities with 10,000 or more inhabitants.
+        range: [0, 5]
       - name: A9
         type: number(quantity)
         constraints: [required]
         description: Number of cities.
+        range: [1, 11]
       - name: A10
         type: number(quantity)
         constraints: [required]
         description: Ratio of urban inhabitants (percentage).
+        range: [33.9, 100]
       - name: A11
         type: number(quantity)
         constraints: [required]
         description: Average salary.
+        range: [8110, 12541]
       - name: A12
         type: number(quantity)
-        constraints: [required]
         description: Unemployment rate in 1995 (percentage).
+        range: [0.2, 7.3]
       - name: A13
         type: number(quantity)
         constraints: [required]
         description: Unemployment rate in 1996 (percentage).
+        range: [0.43, 9.4]
       - name: A14
         type: number(quantity)
         constraints: [required]
         description: Number of entrepreneurs per 1000 inhabitants.
+        range: [81, 167]
       - name: A15
         type: number(quantity)
-        constraints: [required]
         description: Number of committed crimes in 1995.
+        range: [818, 85677]
       - name: A16
         type: number(quantity)
         constraints: [required]
         description: Number of committed crimes in 1996.
+        range: [888, 99107]
 
 relationships:
   - description: Account is located in a district.

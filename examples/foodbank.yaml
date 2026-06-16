@@ -1,9 +1,6 @@
 # source: https://github.com/hadley/foodbank
 
-name: foodbank
-description: >
-  USDA FoodData Central foundation foods, including nutrient values,
-  portion sizes, and food categories (December 2025).
+version: 0.1.0
 
 tables:
   food:
@@ -313,12 +310,10 @@ relationships:
   - description: Each food has many nutrient values.
     cardinality: one-to-many
     join: food.fdc_id = food_nutrient.fdc_id
-    conflicts: [data_points, amount]
 
   - description: Each food has zero or more portion measures.
     cardinality: one-to-many
     join: food.fdc_id = food_portion.fdc_id
-    conflicts: [data_points, amount]
 
   - description: Each food nutrient value refers to one nutrient.
     cardinality: many-to-one

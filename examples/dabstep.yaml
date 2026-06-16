@@ -1,5 +1,7 @@
 # source: https://github.com/hadley/dabstep
 
+version: 0.1.0
+
 tables:
   payments:
     description: >
@@ -132,7 +134,7 @@ tables:
       - name: acquirer_country
         type: enum
         values: [FR, GB, IT, NL, US]
-        constraints: [required, foreign_key]
+        constraints: [required]
         description: >
           Country of the acquiring bank. ISO 3166-1 alpha-2 code.
 
@@ -240,7 +242,7 @@ tables:
         constraints: [required]
         description: Card scheme this rule applies to. Always set (never null).
       - name: account_type
-        type: list<enum>
+        type: enum
         values:
           D: Enterprise - Digital
           F: Platform - Franchise
@@ -264,12 +266,14 @@ tables:
       - name: fraud_percent_min
         type: number(quantity)
         constraints: [required]
+        range: [7.2, 8.3]
         description: >
           Minimum monthly fraud level (%) this rule applies to (inclusive).
           -Inf means no lower bound.
       - name: fraud_percent_max
         type: number(quantity)
         constraints: [required]
+        range: [7.2, 8.3]
         description: >
           Maximum monthly fraud level (%) this rule applies to (exclusive).
           Inf means no upper bound.
@@ -284,7 +288,8 @@ tables:
           Monthly transaction volume range this rule applies to.
           Null means all.
       - name: merchant_category_code
-        type: list<number(id)>
+        type: number(id)
+        examples: [3000, 5499, 5983, 7922, 9399]
         description: >
           MCCs this rule applies to. Empty list means all MCCs.
       - name: is_credit
@@ -293,7 +298,7 @@ tables:
           Whether this rule applies to credit (TRUE) or debit (FALSE)
           transactions. Null means both.
       - name: aci
-        type: list<enum>
+        type: enum
         values:
           A: Card present, non-authenticated
           B: Card present, authenticated
@@ -355,16 +360,19 @@ tables:
       - name: total_volume
         type: number(quantity)
         constraints: [required]
+        range: [91877.05, 438023.59]
         description: Total transaction volume in euros for this merchant-month.
       - name: fraud_volume
         type: number(quantity)
         constraints: [required]
+        range: [5612.78, 42617.6]
         description: >
           Total volume of transactions flagged as fraudulent disputes,
           in euros.
       - name: fraud_percent
         type: number(quantity)
         constraints: [required]
+        range: [6.09, 11.62]
         description: >
           Fraud rate as a percentage: fraud_volume / total_volume * 100.
       - name: monthly_volume
@@ -399,11 +407,6 @@ tables:
         examples: [Concrete Work Contractors, Eating Places Restaurants, Industrial Supplies, Recreation Services, Veterinary Services]
 
 relationships:
-  - description: >
-      Each payment is processed by an acquirer in one country.
-    cardinality: many-to-one
-    join: payments.acquirer_country = acquirer_countries.country_code
-
   - description: Each payment belongs to one merchant.
     cardinality: many-to-one
     join: payments.merchant = merchants.merchant

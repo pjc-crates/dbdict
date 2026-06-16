@@ -1,5 +1,6 @@
 # source: https://github.com/hadley/otters
 
+version: 0.1.0
 tables:
   otters:
     description: >
@@ -13,7 +14,7 @@ tables:
     columns:
       - name: otter_no
         type: string
-        constraints: [required]
+        constraints: [required, primary_key]
         description: >
           Unique identifier of each individual measured otter. Assigned by
           researchers with a variety of naming conventions across locations
@@ -357,6 +358,7 @@ tables:
         type: string
         description: >
           Notes about the capture or collection event.
+        examples: ["given 92-114", "died summer 1997", "originally 84-001", "given number SO-97-40 in 1997 capture", "pup < 8 wks later but preg missed at capture"]
 
       - name: cause_of_death_capture_method
         type: enum
@@ -373,7 +375,7 @@ relationships:
       Links a female otter to her dependent pup's own record. Not all pups
       have their own row (221 of 389 pup_number values match an otter_no).
     cardinality: one-to-many
-    join: otters.pup_number = otters.otter_no
+    join: otters.otter_no = otters.pup_number
 
 glossary:
   curvilinear length: >
