@@ -235,7 +235,6 @@ tables:
         description: >
           Unique identifier of pup, if present and marked.
         examples: ["67002", "92-198", "KOD_04_121", "SO-08-20", "SO-98-50a"]
-        constraints: [unique]
 
       - name: pup_sex
         type: enum
@@ -357,11 +356,6 @@ tables:
 
       - name: comments
         type: string
-        examples:
-          - "CL (ventral) 119 cm, CL (foetal) 138 cm"
-          - "died in capture net"
-          - "pupped 10 wks later"
-          - "originally 84-001"
         description: >
           Notes about the capture or collection event.
         examples: ["given 92-114", "died summer 1997", "originally 84-001", "given number SO-97-40 in 1997 capture", "pup < 8 wks later but preg missed at capture"]
