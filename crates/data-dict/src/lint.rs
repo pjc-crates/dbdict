@@ -87,8 +87,8 @@ fn check_relationship_table_refs(dict: &DataDict, out: &mut Vec<Diagnostic>) {
         let Some(join) = &rel.join else { continue };
         for q in join.qcols() {
             if !dict.tables.contains_key(&q.table) {
-                let span =
-                    subspan(&rel.join_text.span, q.start, q.end).unwrap_or_else(|| rel.join_text.span.clone());
+                let span = subspan(&rel.join_text.span, q.start, q.end)
+                    .unwrap_or_else(|| rel.join_text.span.clone());
                 out.push(Diagnostic {
                     code: "DD002",
                     message: format!(
@@ -111,7 +111,9 @@ fn check_relationship_column_refs(dict: &DataDict, out: &mut Vec<Diagnostic>) {
             for q in join.qcols() {
                 // Skip if the table doesn't exist — DD002 handles that case
                 // and a column report would be noise.
-                let Some(table) = dict.tables.get(&q.table) else { continue };
+                let Some(table) = dict.tables.get(&q.table) else {
+                    continue;
+                };
                 if table.column(&q.column).is_none() {
                     let span = subspan(&rel.join_text.span, q.start, q.end)
                         .unwrap_or_else(|| rel.join_text.span.clone());
@@ -175,8 +177,12 @@ fn check_foreign_keys_resolve(dict: &DataDict, out: &mut Vec<Diagnostic>) {
                         if fk_side.table != *table_name || fk_side.column != col.name.value {
                             return false;
                         }
-                        let Some(other_tbl) = dict.tables.get(&pk_side.table) else { return false };
-                        let Some(other_col) = other_tbl.column(&pk_side.column) else { return false };
+                        let Some(other_tbl) = dict.tables.get(&pk_side.table) else {
+                            return false;
+                        };
+                        let Some(other_col) = other_tbl.column(&pk_side.column) else {
+                            return false;
+                        };
                         other_col.has(PrimaryKey)
                     })
                 })
@@ -260,7 +266,7 @@ fn check_cardinality_consistency(dict: &DataDict, out: &mut Vec<Diagnostic>) {
         let all_cols_resolve = join.qcols().all(|q| {
             dict.tables
                 .get(&q.table)
-                .map_or(false, |t| t.column(&q.column).is_some())
+                .is_some_and(|t| t.column(&q.column).is_some())
         });
         if !all_cols_resolve {
             continue;
@@ -270,7 +276,9 @@ fn check_cardinality_consistency(dict: &DataDict, out: &mut Vec<Diagnostic>) {
         // of the join. With multi-conjunct joins (date-range overlap), the
         // LHS and RHS tables are the same across all conjuncts, so we can
         // use the first conjunct as the canonical orientation.
-        let Some(first) = join.conjuncts.first() else { continue };
+        let Some(first) = join.conjuncts.first() else {
+            continue;
+        };
         let lhs_table = first.lhs.table.clone();
         let rhs_table = first.rhs.table.clone();
 
@@ -283,8 +291,10 @@ fn check_cardinality_consistency(dict: &DataDict, out: &mut Vec<Diagnostic>) {
         // is unique-implied; that matches the loose intuition behind range
         // joins without producing noise for legitimate overlap joins.
 
-        let lhs_cols_unique = side_has_unique_implied(dict, &lhs_table, join, /* use_lhs = */ true);
-        let rhs_cols_unique = side_has_unique_implied(dict, &rhs_table, join, /* use_lhs = */ false);
+        let lhs_cols_unique =
+            side_has_unique_implied(dict, &lhs_table, join, /* use_lhs = */ true);
+        let rhs_cols_unique =
+            side_has_unique_implied(dict, &rhs_table, join, /* use_lhs = */ false);
 
         let card_span = rel.cardinality.span.clone();
         match rel.cardinality.value {
@@ -349,7 +359,7 @@ fn side_has_unique_implied(
         }
         table
             .column(&q.column)
-            .map_or(false, |c| c.is_unique_implied())
+            .is_some_and(|c| c.is_unique_implied())
     })
 }
 
@@ -360,7 +370,9 @@ const RANGE_TYPES: &[&str] = &["number(ordinal)", "number(quantity)", "date", "d
 fn check_column_data_representation(dict: &DataDict, out: &mut Vec<Diagnostic>) {
     for (table_name, table) in &dict.tables {
         for col in &table.columns {
-            let Some(col_type) = &col.col_type else { continue };
+            let Some(col_type) = &col.col_type else {
+                continue;
+            };
             let type_name = col_type.value.as_str();
             let span = col.name.span.clone();
 
@@ -487,7 +499,7 @@ fn check_units_only_on_quantity(dict: &DataDict, out: &mut Vec<Diagnostic>) {
             let is_quantity = col
                 .col_type
                 .as_ref()
-                .map_or(false, |t| t.value == "number(quantity)");
+                .is_some_and(|t| t.value == "number(quantity)");
             if !is_quantity {
                 let type_desc = col
                     .col_type
