@@ -519,7 +519,8 @@ tables:
     fn validate_data_refuses_invalid_dictionary() {
         // Missing `$version`: the dictionary itself is invalid, so data
         // validation should decline rather than report data diagnostics.
-        let uri = Url::from_file_path("/tmp/data-dict.yaml").unwrap();
+        let dir = temp_dir();
+        let uri = Url::from_file_path(dir.join("data-dict.yaml")).unwrap();
         let result = validate_data_command(&uri, Some("tables: {}\n".to_string()));
         assert!(result["diagnostics"].as_array().unwrap().is_empty());
         assert!(
