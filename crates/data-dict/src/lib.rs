@@ -29,7 +29,7 @@ pub mod lower;
 pub mod model;
 
 pub use lint::{Diagnostic, Diagnostics, Severity};
-pub use quarto_source_map::SourceContext;
+pub use quarto_source_map::{SourceContext, SourceInfo};
 
 use model::DataDict;
 
