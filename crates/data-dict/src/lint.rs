@@ -24,7 +24,7 @@
 //!   `examples`) is absent or wrong for its type. Each type expects exactly
 //!   one: `enum` → `values`; `number(ordinal)`, `number(quantity)`, `date`,
 //!   `datetime` → `range`; all others → `examples` (except `boolean`, which
-//!   needs no data representation key).
+//!   needs no data representation key). A column with no `type` is exempt.
 //! - `DD008`: a column carries `units` but its type is not `number(quantity)`.
 //!   Units are only meaningful for quantities.
 //! - `DD009` (warning): the document omits the recommended `$learn_more`
@@ -43,7 +43,8 @@ pub const LEARN_MORE_URL: &str = "http://data-dict.tidyverse.org/";
 /// Whether a diagnostic blocks validation (`Error`) or is purely advisory
 /// (`Warning`). Errors fail validation; warnings are reported alongside a
 /// successful result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Severity {
     Error,
     Warning,

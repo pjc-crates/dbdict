@@ -1,0 +1,19 @@
+# expected: validates cleanly - a column with only a `name` (no `type`) is
+# acknowledged but not described, so it needs no `values`, `range`, or
+# `examples` and is exempt from DD007.
+
+$version: 0.1.0
+$learn_more: http://data-dict.tidyverse.org/
+
+tables:
+  t:
+    description: A table.
+    source:
+      parquet: t.parquet
+    columns:
+      - name: label
+        type: string
+        description: A label.
+        examples: [a, b, c]
+      - name: scratch
+        description: An internal column we don't care about.

@@ -171,6 +171,17 @@ fn minimal() {
     );
 }
 
+// A column with only a `name` and no `type` is acknowledged but not described,
+// so it is exempt from the DD007 data-representation requirement.
+#[test]
+fn typeless_column_needs_no_representation() {
+    let path = fixture("valid/typeless-column.yaml");
+    assert!(
+        diagnostics(&path, Severity::Error).is_empty(),
+        "a column with no `type` must not trigger DD007"
+    );
+}
+
 // --- warnings ------------------------------------------------------------
 
 // A document missing the recommended `$learn_more` key validates (it is not an

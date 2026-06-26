@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use data_dict::data::{ColumnIssue, DataError, validate_parquet};
+use data_dict::Severity;
+use data_dict::data::{ColumnIssue, DataError, DataReport, IssueKind, validate_parquet};
 use indoc::{formatdoc, indoc};
 use parquet::data_type::{ByteArray, ByteArrayType, DoubleType};
 use parquet::file::properties::WriterProperties;
@@ -95,7 +96,8 @@ tables:
 ",
     );
 
-    assert!(validate_parquet(&yaml, &parquet, None).1.is_ok());
+    let report = validate_parquet(&yaml, &parquet, None).1.unwrap();
+    assert!(report.is_clean(), "got {:?}", report.issues);
 }
 
 #[test]
@@ -122,46 +124,105 @@ tables:
 ",
     );
 
-    let err = validate_parquet(&yaml, &parquet, None).1.unwrap_err();
-    let DataError::Mismatch { issues, .. } = err else {
-        panic!("expected Mismatch, got {err:?}");
-    };
+    let report = validate_parquet(&yaml, &parquet, None).1.unwrap();
+    assert!(report.has_errors());
     assert!(matches!(
-        issues.as_slice(),
-        [ColumnIssue::TypeMismatch { column, declared, actual }]
+        report.issues.as_slice(),
+        [ColumnIssue { column, kind: IssueKind::TypeMismatch { declared, actual }, .. }]
             if column == "weight" && declared == "string" && actual == "number"
     ));
 }
 
 #[test]
-fn extra_column_in_data_reported() {
+fn extra_column_in_data_is_warning() {
     let dir = temp_dir();
     let parquet = dir.join("data.parquet");
     write_parquet(&parquet);
     // Dictionary omits `weight`, which is present in the parquet file.
     let yaml = write_yaml(
         &dir,
-        "
-$version: 0.1.0
-tables:
-  animals:
-    source:
-      parquet: data.parquet
-    columns:
-      - name: name
-        type: string
-        examples: [otter, seal]
-",
+        indoc! {"
+            $version: 0.1.0
+            tables:
+              animals:
+                source:
+                  parquet: data.parquet
+                columns:
+                  - name: name
+                    type: string
+                    examples: [otter, seal]
+        "},
     );
 
-    let err = validate_parquet(&yaml, &parquet, None).1.unwrap_err();
-    let DataError::Mismatch { issues, .. } = err else {
-        panic!("expected Mismatch, got {err:?}");
-    };
+    // An undocumented column is a warning, not an error: it is reported but does
+    // not fail validation.
+    let report = validate_parquet(&yaml, &parquet, None).1.unwrap();
+    assert!(!report.has_errors(), "got {:?}", report.issues);
     assert!(matches!(
-        issues.as_slice(),
-        [ColumnIssue::ExtraInData { column, actual }]
-            if column == "weight" && actual == "number"
+        report.issues.as_slice(),
+        [ColumnIssue { column, severity, kind: IssueKind::ExtraInData { actual } }]
+            if column == "weight" && actual == "number" && *severity == Severity::Warning
+    ));
+}
+
+#[test]
+fn typeless_column_skips_type_check_for_present_column() {
+    let dir = temp_dir();
+    let parquet = dir.join("data.parquet");
+    write_parquet(&parquet);
+    // `weight` is a double in the data but listed without a `type`, so its type
+    // is not checked; and because it is listed it is not flagged as undocumented.
+    let yaml = write_yaml(
+        &dir,
+        indoc! {"
+            $version: 0.1.0
+            tables:
+              animals:
+                source:
+                  parquet: data.parquet
+                columns:
+                  - name: name
+                    type: string
+                    examples: [otter, seal]
+                  - name: weight
+        "},
+    );
+
+    let report = validate_parquet(&yaml, &parquet, None).1.unwrap();
+    assert!(report.is_clean(), "got {:?}", report.issues);
+}
+
+#[test]
+fn typeless_column_still_must_exist_in_data() {
+    let dir = temp_dir();
+    let parquet = dir.join("data.parquet");
+    write_parquet(&parquet);
+    // `height` is listed (without a `type`) but absent from the data. Listing a
+    // column that doesn't exist is an error, even when it isn't described.
+    let yaml = write_yaml(
+        &dir,
+        indoc! {"
+            $version: 0.1.0
+            tables:
+              animals:
+                source:
+                  parquet: data.parquet
+                columns:
+                  - name: name
+                    type: string
+                    examples: [otter, seal]
+                  - name: weight
+                    type: number(quantity)
+                    range: [0, 100]
+                  - name: height
+        "},
+    );
+
+    let report = validate_parquet(&yaml, &parquet, None).1.unwrap();
+    assert!(report.has_errors());
+    assert!(matches!(
+        report.issues.as_slice(),
+        [ColumnIssue { column, kind: IssueKind::MissingInData, .. }] if column == "height"
     ));
 }
 
@@ -192,13 +253,11 @@ tables:
 ",
     );
 
-    let err = validate_parquet(&yaml, &parquet, None).1.unwrap_err();
-    let DataError::Mismatch { issues, .. } = err else {
-        panic!("expected Mismatch, got {err:?}");
-    };
+    let report = validate_parquet(&yaml, &parquet, None).1.unwrap();
+    assert!(report.has_errors());
     assert!(matches!(
-        issues.as_slice(),
-        [ColumnIssue::MissingInData { column }] if column == "height"
+        report.issues.as_slice(),
+        [ColumnIssue { column, kind: IssueKind::MissingInData, .. }] if column == "height"
     ));
 }
 
@@ -280,7 +339,7 @@ fn check_column(
     schema_col: &str,
     write: impl FnOnce(&mut SerializedColumnWriter),
     column: &str,
-) -> Result<(), DataError> {
+) -> Result<DataReport, DataError> {
     let dir = temp_dir();
     let parquet = dir.join("data.parquet");
 
@@ -342,17 +401,16 @@ fn nulls_in_required_column_reported() {
         "},
     );
 
-    let err = result.unwrap_err();
-    let DataError::Mismatch { issues, .. } = err else {
-        panic!("expected Mismatch, got {err:?}");
-    };
+    let report = result.unwrap();
+    assert!(report.has_errors());
     assert!(
         matches!(
-            issues.as_slice(),
-            [ColumnIssue::NullsInRequired { column, count, rows }]
+            report.issues.as_slice(),
+            [ColumnIssue { column, kind: IssueKind::NullsInRequired { count, rows }, .. }]
                 if column == "weight" && *count == 1 && rows == &[2]
         ),
-        "got {issues:?}"
+        "got {:?}",
+        report.issues
     );
 }
 
@@ -375,7 +433,7 @@ fn required_column_without_nulls_ok() {
         "},
     );
 
-    assert!(result.is_ok(), "got {result:?}");
+    assert!(result.unwrap().is_clean());
 }
 
 #[test]
@@ -391,7 +449,7 @@ fn nulls_in_optional_column_ok() {
         "},
     );
 
-    assert!(result.is_ok(), "got {result:?}");
+    assert!(result.unwrap().is_clean());
 }
 
 #[test]
@@ -409,15 +467,14 @@ fn primary_key_implies_required_for_nulls() {
         "},
     );
 
-    let err = result.unwrap_err();
-    let DataError::Mismatch { issues, .. } = err else {
-        panic!("expected Mismatch, got {err:?}");
-    };
+    let report = result.unwrap();
+    assert!(report.has_errors());
     assert!(
         matches!(
-            issues.as_slice(),
-            [ColumnIssue::NullsInRequired { column, .. }] if column == "weight"
+            report.issues.as_slice(),
+            [ColumnIssue { column, kind: IssueKind::NullsInRequired { .. }, .. }] if column == "weight"
         ),
-        "got {issues:?}"
+        "got {:?}",
+        report.issues
     );
 }
