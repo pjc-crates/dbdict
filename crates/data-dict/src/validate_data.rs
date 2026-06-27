@@ -13,8 +13,8 @@ use std::path::Path;
 
 use data_dict_parquet::{ColumnNeeds, ColumnStats};
 
-use crate::model::{Column, DataDict, Table};
-use crate::{ColumnIssue, Diagnostics, IssueKind, Level, ValidationError, ValidationReport};
+use crate::model::{Column, Table};
+use crate::problem::{Problem, ProblemKind, ProblemSet, Severity};
 
 /// How many example values (e.g. offending rows) to record per validation
 /// issue. Issues count every offender but only list this many.
@@ -26,47 +26,26 @@ const SAMPLE_LIMIT: usize = 5;
 /// metadata-level check ([`crate::validate_meta`]) plus the value-level checks
 /// below: reading the columns and pages the checks imply and reporting, for
 /// example, nulls in a required column.
-pub fn validate_data(
-    dict_path: &Path,
-    parquet_path: &Path,
-    table: Option<&str>,
-) -> (Diagnostics, Result<ValidationReport, ValidationError>) {
-    let (diagnostics, dict) = crate::validated_dict(dict_path);
-    let result = match dict {
-        Err(err) => Err(err),
-        Ok(None) => Ok(ValidationReport::skipped(Level::Data)),
-        Ok(Some(dict)) => report(&dict, parquet_path, table),
-    };
-    (diagnostics, result)
-}
-
-/// Build the data-level report for one dataset: the metadata checks, then the
-/// value-level checks that require scanning the data.
-fn report(
-    dict: &DataDict,
-    parquet_path: &Path,
-    table: Option<&str>,
-) -> Result<ValidationReport, ValidationError> {
-    let table = crate::select_table(dict, table)?;
-    let actual = data_dict_parquet::column_types(parquet_path)?;
-    let mut issues = crate::validate_meta::meta_issues(table, &actual);
-    value_issues(table, parquet_path, &actual, &mut issues)?;
-    Ok(ValidationReport {
-        table: table.name.value.clone(),
-        level: Level::Data,
-        issues,
+pub fn validate_data(dict_path: &Path, parquet_path: &Path, table: Option<&str>) -> ProblemSet {
+    crate::compare_dataset(dict_path, parquet_path, table, |table, actual, problems| {
+        // The data level runs the metadata checks first, then its own value checks.
+        crate::validate_meta::meta_issues(table, actual, problems);
+        if let Err(e) = value_issues(table, parquet_path, actual, problems) {
+            problems.push(Problem::preflight(ProblemKind::Parquet, e.to_string()));
+        }
     })
 }
 
 /// Run the value-level checks for the dictionary's `table` against the data,
-/// appending any issues found. `actual` is the column schema already read for
-/// the metadata checks, used here only to tell which columns are present.
+/// pushing any problems found into `out`. `actual` is the column schema already
+/// read for the metadata checks, used here only to tell which columns are
+/// present.
 fn value_issues(
     table: &Table,
     parquet_path: &Path,
     actual: &[(String, String)],
-    issues: &mut Vec<ColumnIssue>,
-) -> Result<(), ValidationError> {
+    out: &mut ProblemSet,
+) -> Result<(), data_dict_parquet::ParquetError> {
     let present = |name: &str| actual.iter().any(|(an, _)| an == name);
 
     // Phase 1 — plan. Ask every value-level check what it needs of each present
@@ -95,7 +74,7 @@ fn value_issues(
     for col in &table.columns {
         if let Some(stat) = stats.get(&col.name.value) {
             for check in VALUE_CHECKS {
-                check.check(col, stat, issues);
+                check.check(col, stat, out);
             }
         }
     }
@@ -114,7 +93,7 @@ trait ColumnCheck {
 
     /// Draw a verdict from the gathered stats. Only ever called with stats whose
     /// requested fields this check (or another) asked for.
-    fn check(&self, col: &Column, stats: &ColumnStats, issues: &mut Vec<ColumnIssue>);
+    fn check(&self, col: &Column, stats: &ColumnStats, out: &mut ProblemSet);
 }
 
 /// Every value-level check, run against each present column. Add a check here
@@ -131,13 +110,14 @@ impl ColumnCheck for RequiredNotNull {
         }
     }
 
-    fn check(&self, col: &Column, stats: &ColumnStats, issues: &mut Vec<ColumnIssue>) {
+    fn check(&self, col: &Column, stats: &ColumnStats, out: &mut ProblemSet) {
         // Nulls are only counted when this check requested them (i.e. the column
         // is required), so a positive count is exactly a violation.
         if stats.null_count > 0 {
-            issues.push(ColumnIssue::error(
+            out.push(Problem::column(
+                Severity::Error,
                 col.name.value.clone(),
-                IssueKind::NullsInRequired {
+                ProblemKind::NullsInRequired {
                     count: stats.null_count,
                     rows: stats.null_rows.clone(),
                 },
