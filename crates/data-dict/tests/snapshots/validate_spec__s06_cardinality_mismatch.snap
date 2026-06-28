@@ -1,36 +1,35 @@
 ---
 source: crates/data-dict/tests/validate_spec.rs
-assertion_line: 322
 expression: "failing_diagnostic(\"spec/s06-cardinality-mismatch.yaml\")"
 ---
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
     ╭─[ spec/s06-cardinality-mismatch.yaml:14:15 ]
     │
  14 │       - name: id
     │               ─┬  
-    │                ╰── column `transaction.id` has type `number(id)` but is missing the expected `examples` property
+    │                ╰── `transaction.id` has type `number(id)` but has no `examples`
 ────╯
 
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
     ╭─[ spec/s06-cardinality-mismatch.yaml:17:15 ]
     │
  17 │       - name: account_id
     │               ─────┬────  
-    │                    ╰────── column `transaction.account_id` has type `number(id)` but is missing the expected `examples` property
+    │                    ╰────── `transaction.account_id` has type `number(id)` but has no `examples`
 ────╯
 
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
     ╭─[ spec/s06-cardinality-mismatch.yaml:25:15 ]
     │
  25 │       - name: account_id
     │               ─────┬────  
-    │                    ╰────── column `account.account_id` has type `number(id)` but is missing the expected `examples` property
+    │                    ╰────── `account.account_id` has type `number(id)` but has no `examples`
 ────╯
 
-Error: [S06]
+Error: [S06] A `many-to-one` join must have a `primary_key` or `unique` column on its right ("one") side.
     ╭─[ spec/s06-cardinality-mismatch.yaml:30:18 ]
     │
  30 │   - cardinality: many-to-one
     │                  ─────┬─────  
-    │                       ╰─────── cardinality is `many-to-one` but the right-side join column on `account` is not marked `primary_key` or `unique`
+    │                       ╰─────── the right-side join column on `account` is not marked `primary_key` or `unique`
 ────╯

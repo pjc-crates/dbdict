@@ -8,19 +8,21 @@ expression: "serde_json::to_string_pretty(&value).unwrap()"
       "code": "S09",
       "hint": "Add `$learn_more: http://data-dict.tidyverse.org/` so readers unfamiliar with the format can find it",
       "kind": "spec",
-      "message": "document is missing the recommended `$learn_more` key",
+      "message": "The document is missing the recommended `$learn_more` key.",
       "severity": "warning"
     },
     {
       "code": "S07",
+      "expected": "String, number, and ID columns must describe their data with `examples`.",
       "kind": "spec",
-      "message": "column `measurements.id` has type `number(id)` but is missing the expected `examples` property",
+      "message": "`measurements.id` has type `number(id)` but has no `examples`",
       "severity": "error"
     },
     {
       "code": "S08",
+      "expected": "A column with `units` must have type `number(quantity)`.",
       "kind": "spec",
-      "message": "column `measurements.name` has `units` but type `string`; `units` is only valid on `number(quantity)` columns",
+      "message": "`measurements.name` has `units` but has type `string`",
       "severity": "error"
     }
   ],

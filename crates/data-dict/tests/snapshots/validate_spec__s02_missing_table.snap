@@ -1,44 +1,43 @@
 ---
 source: crates/data-dict/tests/validate_spec.rs
-assertion_line: 292
 expression: "failing_diagnostic(\"spec/s02-missing-table.yaml\")"
 ---
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
     ╭─[ spec/s02-missing-table.yaml:13:15 ]
     │
  13 │       - name: id
     │               ─┬  
-    │                ╰── column `food.id` has type `number(id)` but is missing the expected `examples` property
+    │                ╰── `food.id` has type `number(id)` but has no `examples`
 ────╯
 
-Error: [S01]
+Error: [S01] Every `foreign_key` column must have a matching relationship to a `primary_key`.
     ╭─[ spec/s02-missing-table.yaml:16:15 ]
     │
  16 │       - name: food_category_id
     │               ────────┬───────  
-    │                       ╰───────── column `food.food_category_id` is marked `foreign_key` but no `relationships` entry points it at a `primary_key` column
+    │                       ╰───────── `food.food_category_id` is `foreign_key` but no relationship points it at a `primary_key`
 ────╯
 
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
     ╭─[ spec/s02-missing-table.yaml:16:15 ]
     │
  16 │       - name: food_category_id
     │               ────────┬───────  
-    │                       ╰───────── column `food.food_category_id` has type `number(id)` but is missing the expected `examples` property
+    │                       ╰───────── `food.food_category_id` has type `number(id)` but has no `examples`
 ────╯
 
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
     ╭─[ spec/s02-missing-table.yaml:24:15 ]
     │
  24 │       - name: id
     │               ─┬  
-    │                ╰── column `food_category.id` has type `number(id)` but is missing the expected `examples` property
+    │                ╰── `food_category.id` has type `number(id)` but has no `examples`
 ────╯
 
-Error: [S02]
+Error: [S02] A `join` must refer to known tables.
     ╭─[ spec/s02-missing-table.yaml:30:35 ]
     │
  30 │     join: food.food_category_id = category.id
     │                                   ─────┬─────  
-    │                                        ╰─────── relationship references table `category`, which is not defined in `tables`
+    │                                        ╰─────── table `category` is not defined
 ────╯

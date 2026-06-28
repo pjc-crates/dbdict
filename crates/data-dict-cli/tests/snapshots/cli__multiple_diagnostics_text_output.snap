@@ -7,22 +7,22 @@ Warning: [S09]
    │
  2 │ $version: 0.1.0
    │ ────┬───  
-   │     ╰───── document is missing the recommended `$learn_more` key
+   │     ╰───── The document is missing the recommended `$learn_more` key.
 ───╯
 ℹ Add `$learn_more: http://data-dict.tidyverse.org/` so readers unfamiliar with the format can find it
 
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
    ╭─[ <fixture>:8:15 ]
    │
  8 │       - name: id
    │               ─┬  
-   │                ╰── column `measurements.id` has type `number(id)` but is missing the expected `examples` property
+   │                ╰── `measurements.id` has type `number(id)` but has no `examples`
 ───╯
 
-Error: [S08]
+Error: [S08] A column with `units` must have type `number(quantity)`.
     ╭─[ <fixture>:13:16 ]
     │
  13 │         units: kg
     │                ─┬  
-    │                 ╰── column `measurements.name` has `units` but type `string`; `units` is only valid on `number(quantity)` columns
+    │                 ╰── `measurements.name` has `units` but has type `string`
 ────╯

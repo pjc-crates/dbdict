@@ -2,10 +2,10 @@
 source: crates/data-dict/tests/validate_spec.rs
 expression: "failing_diagnostic(\"spec/s08-units-on-non-quantity.yaml\")"
 ---
-Error: [S08]
+Error: [S08] A column with `units` must have type `number(quantity)`.
     ╭─[ spec/s08-units-on-non-quantity.yaml:13:16 ]
     │
  13 │         units: place
     │                ──┬──  
-    │                  ╰──── column `races.finish_rank` has `units` but type `number(ordinal)`; `units` is only valid on `number(quantity)` columns
+    │                  ╰──── `races.finish_rank` has `units` but has type `number(ordinal)`
 ────╯

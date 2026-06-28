@@ -1,20 +1,19 @@
 ---
 source: crates/data-dict/tests/validate_spec.rs
-assertion_line: 365
 expression: "failing_diagnostic(\"spec/s08-range-on-string-type.yaml\")"
 ---
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
     ╭─[ spec/s08-range-on-string-type.yaml:11:15 ]
     │
  11 │       - name: c
     │               ┬  
-    │               ╰── column `t.c` has type `string` but is missing the expected `examples` property
+    │               ╰── `t.c` has type `string` but has no `examples`
 ────╯
 
-Error: [S07]
+Error: [S07] String, number, and ID columns must not use `range`.
     ╭─[ spec/s08-range-on-string-type.yaml:11:15 ]
     │
  11 │       - name: c
     │               ┬  
-    │               ╰── column `t.c` has type `string` but uses `range`; `range` is only valid for `number(ordinal)`, `number(quantity)`, `date`, and `datetime`
+    │               ╰── `t.c` has type `string` but uses `range`
 ────╯

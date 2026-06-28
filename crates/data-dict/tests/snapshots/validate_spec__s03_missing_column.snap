@@ -1,44 +1,43 @@
 ---
 source: crates/data-dict/tests/validate_spec.rs
-assertion_line: 297
 expression: "failing_diagnostic(\"spec/s03-missing-column.yaml\")"
 ---
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
     ╭─[ spec/s03-missing-column.yaml:12:15 ]
     │
  12 │       - name: id
     │               ─┬  
-    │                ╰── column `food.id` has type `number(id)` but is missing the expected `examples` property
+    │                ╰── `food.id` has type `number(id)` but has no `examples`
 ────╯
 
-Error: [S01]
+Error: [S01] Every `foreign_key` column must have a matching relationship to a `primary_key`.
     ╭─[ spec/s03-missing-column.yaml:15:15 ]
     │
  15 │       - name: food_category_id
     │               ────────┬───────  
-    │                       ╰───────── column `food.food_category_id` is marked `foreign_key` but no `relationships` entry points it at a `primary_key` column
+    │                       ╰───────── `food.food_category_id` is `foreign_key` but no relationship points it at a `primary_key`
 ────╯
 
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
     ╭─[ spec/s03-missing-column.yaml:15:15 ]
     │
  15 │       - name: food_category_id
     │               ────────┬───────  
-    │                       ╰───────── column `food.food_category_id` has type `number(id)` but is missing the expected `examples` property
+    │                       ╰───────── `food.food_category_id` has type `number(id)` but has no `examples`
 ────╯
 
-Error: [S07]
+Error: [S07] String, number, and ID columns must describe their data with `examples`.
     ╭─[ spec/s03-missing-column.yaml:23:15 ]
     │
  23 │       - name: id
     │               ─┬  
-    │                ╰── column `food_category.id` has type `number(id)` but is missing the expected `examples` property
+    │                ╰── `food_category.id` has type `number(id)` but has no `examples`
 ────╯
 
-Error: [S03]
+Error: [S03] A `join` must refer to known columns.
     ╭─[ spec/s03-missing-column.yaml:29:35 ]
     │
  29 │     join: food.food_category_id = food_category.identifier
     │                                   ────────────┬───────────  
-    │                                               ╰───────────── column `identifier` is not defined in table `food_category`
+    │                                               ╰───────────── table `food_category` has no column `identifier`
 ────╯

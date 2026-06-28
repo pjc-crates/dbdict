@@ -60,6 +60,11 @@ pub struct Problem {
     pub column: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    /// What the spec expects, stated independently of this occurrence. When
+    /// present it leads the rendering (the title line) and `message` reports
+    /// what was found instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<String>,
     /// The YAML span this problem points at (spec problems only). Display-only.
     #[serde(skip)]
     pub span: Option<SourceInfo>,
@@ -142,6 +147,7 @@ impl Problem {
             message: message.into(),
             column: None,
             hint: None,
+            expected: None,
             span: Some(span),
             kind: ProblemKind::Spec,
         }
@@ -157,6 +163,7 @@ impl Problem {
             message: column_message(&column, &kind),
             column: Some(column),
             hint: None,
+            expected: None,
             span: None,
             kind,
         }
@@ -170,6 +177,7 @@ impl Problem {
             message: message.into(),
             column: None,
             hint: None,
+            expected: None,
             span: None,
             kind,
         }
@@ -181,9 +189,17 @@ impl Problem {
         self
     }
 
+    /// State what the spec expects, independent of this occurrence. It leads the
+    /// rendering (the title line), leaving `message` to report what was found.
+    pub(crate) fn with_expected(mut self, expected: impl Into<String>) -> Self {
+        self.expected = Some(expected.into());
+        self
+    }
+
     /// Render to display text. Span-located problems get full source
-    /// highlighting; the rest render as a single `severity [code]: message` line
-    /// (or just the message when there is no code).
+    /// highlighting; the rest render as a `severity [code]: message` line (or
+    /// just the message when there is no code). When `expected` is set it leads
+    /// the output and `message` follows on its own line as the "found" detail.
     pub fn to_text(&self, ctx: &SourceContext) -> String {
         match &self.span {
             Some(span) => self.render_with_source(span, ctx),
@@ -192,7 +208,12 @@ impl Problem {
     }
 
     fn render_with_source(&self, span: &SourceInfo, ctx: &SourceContext) -> String {
-        let header = self.code.map_or_else(String::new, |c| format!("[{c}]"));
+        let header = match (self.code, &self.expected) {
+            (Some(c), Some(e)) => format!("[{c}] {e}"),
+            (Some(c), None) => format!("[{c}]"),
+            (None, Some(e)) => e.clone(),
+            (None, None) => String::new(),
+        };
         let mut builder = match self.severity {
             Severity::Error => DiagnosticMessageBuilder::error(header),
             Severity::Warning => DiagnosticMessageBuilder::warning(header),
@@ -211,10 +232,14 @@ impl Problem {
             Severity::Error => "error",
             Severity::Warning => "warning",
         };
+        let headline = self.expected.as_deref().unwrap_or(&self.message);
         let mut line = match self.code {
-            Some(code) => format!("{severity} [{code}]: {}", self.message),
-            None => self.message.clone(),
+            Some(code) => format!("{severity} [{code}]: {headline}"),
+            None => headline.to_string(),
         };
+        if self.expected.is_some() {
+            line.push_str(&format!("\n  {}", self.message));
+        }
         if let Some(hint) = &self.hint {
             line.push_str(&format!("\n  {hint}"));
         }

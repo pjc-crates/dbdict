@@ -137,15 +137,15 @@ fn check_relationship_table_refs(dict: &DataDict, out: &mut ProblemSet) {
             if !dict.tables.contains_key(&q.table) {
                 let span = subspan(&rel.join_text.span, q.start, q.end)
                     .unwrap_or_else(|| rel.join_text.span.clone());
-                out.push(Problem::spec(
-                    "S02",
-                    Severity::Error,
-                    format!(
-                        "relationship references table `{}`, which is not defined in `tables`",
-                        q.table
-                    ),
-                    span,
-                ));
+                out.push(
+                    Problem::spec(
+                        "S02",
+                        Severity::Error,
+                        format!("table `{}` is not defined", q.table),
+                        span,
+                    )
+                    .with_expected("A `join` must refer to known tables."),
+                );
             }
         }
     }
@@ -165,15 +165,15 @@ fn check_relationship_column_refs(dict: &DataDict, out: &mut ProblemSet) {
                 if table.column(&q.column).is_none() {
                     let span = subspan(&rel.join_text.span, q.start, q.end)
                         .unwrap_or_else(|| rel.join_text.span.clone());
-                    out.push(Problem::spec(
-                        "S03",
-                        Severity::Error,
-                        format!(
-                            "column `{}` is not defined in table `{}`",
-                            q.column, q.table
-                        ),
-                        span,
-                    ));
+                    out.push(
+                        Problem::spec(
+                            "S03",
+                            Severity::Error,
+                            format!("table `{}` has no column `{}`", q.table, q.column),
+                            span,
+                        )
+                        .with_expected("A `join` must refer to known columns."),
+                    );
                 }
             }
         }
@@ -192,15 +192,15 @@ fn check_join_table_count(dict: &DataDict, out: &mut ProblemSet) {
         let Some(join) = &rel.join else { continue };
         let tables = join.tables();
         if tables.is_empty() || tables.len() > 2 {
-            out.push(Problem::spec(
-                "S04",
-                Severity::Error,
-                format!(
-                    "`join` must reference exactly one (self-join) or two tables; found {}",
-                    tables.len()
-                ),
-                rel.join_text.span.clone(),
-            ));
+            out.push(
+                Problem::spec(
+                    "S04",
+                    Severity::Error,
+                    format!("this `join` references {} tables", tables.len()),
+                    rel.join_text.span.clone(),
+                )
+                .with_expected("A `join` must reference one (self-join) or two tables."),
+            );
         }
     }
 }
@@ -241,10 +241,13 @@ fn check_foreign_keys_resolve(dict: &DataDict, out: &mut ProblemSet) {
                         "S01",
                         Severity::Error,
                         format!(
-                        "column `{}.{}` is marked `foreign_key` but no `relationships` entry points it at a `primary_key` column",
-                        table_name, col.name.value
-                    ),
+                            "`{}.{}` is `foreign_key` but no relationship points it at a `primary_key`",
+                            table_name, col.name.value
+                        ),
                         col.name.span.clone(),
+                    )
+                    .with_expected(
+                        "Every `foreign_key` column must have a matching relationship to a `primary_key`.",
                     ),
                 );
             }
@@ -276,16 +279,21 @@ fn check_conflicts_present_on_both_sides(dict: &DataDict, out: &mut ProblemSet) 
                 }
             }
             if !missing_from.is_empty() {
-                out.push(Problem::spec(
-                    "S05",
-                    Severity::Error,
-                    format!(
-                        "`conflicts` entry `{}` is not a column of {}",
-                        c.value,
-                        join_with_commas(&missing_from)
+                out.push(
+                    Problem::spec(
+                        "S05",
+                        Severity::Error,
+                        format!(
+                            "`{}` is not a column of {}",
+                            c.value,
+                            join_with_commas(&missing_from)
+                        ),
+                        c.span.clone(),
+                    )
+                    .with_expected(
+                        "A `conflicts` entry must name a column on both sides of the join.",
                     ),
-                    c.span.clone(),
-                ));
+                );
             }
         }
     }
@@ -355,10 +363,13 @@ fn check_cardinality_consistency(dict: &DataDict, out: &mut ProblemSet) {
                             "S06",
                             Severity::Error,
                             format!(
-                            "cardinality is `one-to-one` but the join columns on `{}` or `{}` are not marked `primary_key` or `unique`",
-                            lhs_table, rhs_table
-                        ),
+                                "the join columns on `{}` or `{}` are not marked `primary_key` or `unique`",
+                                lhs_table, rhs_table
+                            ),
                             card_span,
+                        )
+                        .with_expected(
+                            "A `one-to-one` join must have `primary_key` or `unique` columns on both sides.",
                         ),
                     );
                 }
@@ -372,10 +383,13 @@ fn check_cardinality_consistency(dict: &DataDict, out: &mut ProblemSet) {
                             "S06",
                             Severity::Error,
                             format!(
-                            "cardinality is `one-to-many` but the left-side join column on `{}` is not marked `primary_key` or `unique`",
-                            lhs_table
-                        ),
+                                "the left-side join column on `{}` is not marked `primary_key` or `unique`",
+                                lhs_table
+                            ),
                             card_span,
+                        )
+                        .with_expected(
+                            "A `one-to-many` join must have a `primary_key` or `unique` column on its left (\"one\") side.",
                         ),
                     );
                 }
@@ -387,10 +401,13 @@ fn check_cardinality_consistency(dict: &DataDict, out: &mut ProblemSet) {
                             "S06",
                             Severity::Error,
                             format!(
-                            "cardinality is `many-to-one` but the right-side join column on `{}` is not marked `primary_key` or `unique`",
-                            rhs_table
-                        ),
+                                "the right-side join column on `{}` is not marked `primary_key` or `unique`",
+                                rhs_table
+                            ),
                             card_span,
+                        )
+                        .with_expected(
+                            "A `many-to-one` join must have a `primary_key` or `unique` column on its right (\"one\") side.",
                         ),
                     );
                 }
@@ -432,81 +449,82 @@ fn check_column_data_representation(dict: &DataDict, out: &mut ProblemSet) {
             let type_name = col_type.value.as_str();
             let span = col.name.span.clone();
 
+            let found = |key: &str| {
+                format!(
+                    "`{}.{}` has type `{}` but uses `{}`",
+                    table_name, col.name.value, type_name, key
+                )
+            };
+            let missing = |key: &str| {
+                format!(
+                    "`{}.{}` has type `{}` but has no `{}`",
+                    table_name, col.name.value, type_name, key
+                )
+            };
+
             if type_name == "enum" {
                 if !col.has_values {
+                    out.push(
+                        Problem::spec("S07", Severity::Error, missing("values"), span)
+                            .with_expected(
+                                "An `enum` column must list its categories with `values`.",
+                            ),
+                    );
+                }
+                if col.has_range {
                     out.push(
                         Problem::spec(
                             "S07",
                             Severity::Error,
-                            format!(
-                            "column `{}.{}` has type `enum` but is missing the required `values` property",
-                            table_name, col.name.value
-                        ),
-                            span,
-                        ),
+                            found("range"),
+                            col.name.span.clone(),
+                        )
+                        .with_expected("An `enum` column must use `values`, not `range`."),
                     );
                 }
-                if col.has_range {
-                    out.push(Problem::spec(
-                        "S07",
-                        Severity::Error,
-                        format!(
-                            "column `{}.{}` has type `enum` but uses `range`; \
-                             enum columns represent their data with `values`",
-                            table_name, col.name.value
-                        ),
-                        col.name.span.clone(),
-                    ));
-                }
                 if col.has_examples {
-                    out.push(Problem::spec(
-                        "S07",
-                        Severity::Error,
-                        format!(
-                            "column `{}.{}` has type `enum` but uses `examples`; \
-                             enum columns represent their data with `values`",
-                            table_name, col.name.value
-                        ),
-                        col.name.span.clone(),
-                    ));
+                    out.push(
+                        Problem::spec(
+                            "S07",
+                            Severity::Error,
+                            found("examples"),
+                            col.name.span.clone(),
+                        )
+                        .with_expected("An `enum` column must use `values`, not `examples`."),
+                    );
                 }
             } else if RANGE_TYPES.contains(&type_name) {
                 if !col.has_range {
                     out.push(
-                        Problem::spec(
-                            "S07",
-                            Severity::Error,
-                            format!(
-                            "column `{}.{}` has type `{}` but is missing the expected `range` property",
-                            table_name, col.name.value, type_name
-                        ),
-                            span,
-                        ),
+                        Problem::spec("S07", Severity::Error, missing("range"), span)
+                            .with_expected("Ordered numeric and date columns must describe their bounds with `range`."),
                     );
                 }
                 if col.has_values {
-                    out.push(Problem::spec(
-                        "S07",
-                        Severity::Error,
-                        format!(
-                            "column `{}.{}` has type `{}` but uses `values`; \
-                             use `range` for ordered numeric and date columns",
-                            table_name, col.name.value, type_name
+                    out.push(
+                        Problem::spec(
+                            "S07",
+                            Severity::Error,
+                            found("values"),
+                            col.name.span.clone(),
+                        )
+                        .with_expected(
+                            "Ordered numeric and date columns must use `range`, not `values`.",
                         ),
-                        col.name.span.clone(),
-                    ));
+                    );
                 }
                 if col.has_examples {
-                    out.push(Problem::spec(
-                        "S07",
-                        Severity::Error,
-                        format!(
-                            "column `{}.{}` has type `{}` but uses `examples`; \
-                             use `range` for ordered numeric and date columns",
-                            table_name, col.name.value, type_name
+                    out.push(
+                        Problem::spec(
+                            "S07",
+                            Severity::Error,
+                            found("examples"),
+                            col.name.span.clone(),
+                        )
+                        .with_expected(
+                            "Ordered numeric and date columns must use `range`, not `examples`.",
                         ),
-                        col.name.span.clone(),
-                    ));
+                    );
                 }
             } else if type_name == "boolean" {
                 for (present, key) in [
@@ -515,56 +533,40 @@ fn check_column_data_representation(dict: &DataDict, out: &mut ProblemSet) {
                     (col.has_examples, "examples"),
                 ] {
                     if present {
-                        out.push(Problem::spec(
-                            "S07",
-                            Severity::Error,
-                            format!(
-                                "column `{}.{}` has type `boolean` but uses `{}`; \
-                                 `boolean` columns must not have `values`, `range`, or `examples`",
-                                table_name, col.name.value, key
-                            ),
-                            col.name.span.clone(),
-                        ));
+                        out.push(
+                            Problem::spec("S07", Severity::Error, found(key), col.name.span.clone())
+                                .with_expected("A `boolean` column must not have `values`, `range`, or `examples`."),
+                        );
                     }
                 }
             } else {
                 if !col.has_examples {
                     out.push(
-                        Problem::spec(
-                            "S07",
-                            Severity::Error,
-                            format!(
-                            "column `{}.{}` has type `{}` but is missing the expected `examples` property",
-                            table_name, col.name.value, type_name
-                        ),
-                            span,
-                        ),
+                        Problem::spec("S07", Severity::Error, missing("examples"), span)
+                            .with_expected("String, number, and ID columns must describe their data with `examples`."),
                     );
                 }
                 if col.has_values {
-                    out.push(Problem::spec(
-                        "S07",
-                        Severity::Error,
-                        format!(
-                            "column `{}.{}` has type `{}` but uses `values`; \
-                             only `enum` columns should use `values`",
-                            table_name, col.name.value, type_name
-                        ),
-                        col.name.span.clone(),
-                    ));
+                    out.push(
+                        Problem::spec(
+                            "S07",
+                            Severity::Error,
+                            found("values"),
+                            col.name.span.clone(),
+                        )
+                        .with_expected("String, number, and ID columns must not use `values`."),
+                    );
                 }
                 if col.has_range {
-                    out.push(Problem::spec(
-                        "S07",
-                        Severity::Error,
-                        format!(
-                            "column `{}.{}` has type `{}` but uses `range`; \
-                             `range` is only valid for `number(ordinal)`, `number(quantity)`, \
-                             `date`, and `datetime`",
-                            table_name, col.name.value, type_name
-                        ),
-                        col.name.span.clone(),
-                    ));
+                    out.push(
+                        Problem::spec(
+                            "S07",
+                            Severity::Error,
+                            found("range"),
+                            col.name.span.clone(),
+                        )
+                        .with_expected("String, number, and ID columns must not use `range`."),
+                    );
                 }
             }
         }
@@ -591,11 +593,12 @@ fn check_units_only_on_quantity(dict: &DataDict, out: &mut ProblemSet) {
                         "S08",
                         Severity::Error,
                         format!(
-                        "column `{}.{}` has `units` but {}; `units` is only valid on `number(quantity)` columns",
-                        table_name, col.name.value, type_desc
-                    ),
+                            "`{}.{}` has `units` but has {}",
+                            table_name, col.name.value, type_desc
+                        ),
                         units.span.clone(),
-                    ),
+                    )
+                    .with_expected("A column with `units` must have type `number(quantity)`."),
                 );
             }
         }
@@ -614,15 +617,18 @@ fn check_unique_column_names(dict: &DataDict, out: &mut ProblemSet) {
                 continue;
             }
             if !seen.insert(col.name.value.as_str()) {
-                out.push(Problem::spec(
-                    "S10",
-                    Severity::Error,
-                    format!(
-                        "table `{}` has more than one column named `{}`",
-                        table_name, col.name.value
-                    ),
-                    col.name.span.clone(),
-                ));
+                out.push(
+                    Problem::spec(
+                        "S10",
+                        Severity::Error,
+                        format!(
+                            "table `{}` has more than one column named `{}`",
+                            table_name, col.name.value
+                        ),
+                        col.name.span.clone(),
+                    )
+                    .with_expected("Column names must be unique within a table."),
+                );
             }
         }
     }
@@ -633,21 +639,27 @@ fn check_unique_column_names(dict: &DataDict, out: &mut ProblemSet) {
 fn check_non_empty_names(dict: &DataDict, out: &mut ProblemSet) {
     for (table_name, table) in &dict.tables {
         if table.name.value.is_empty() {
-            out.push(Problem::spec(
-                "S11",
-                Severity::Error,
-                "table name is empty".to_string(),
-                table.name.span.clone(),
-            ));
+            out.push(
+                Problem::spec(
+                    "S11",
+                    Severity::Error,
+                    "table name is empty".to_string(),
+                    table.name.span.clone(),
+                )
+                .with_expected("A table must have a non-empty name."),
+            );
         }
         for col in &table.columns {
             if col.name.value.is_empty() {
-                out.push(Problem::spec(
-                    "S11",
-                    Severity::Error,
-                    format!("a column in table `{table_name}` has an empty `name`"),
-                    col.name.span.clone(),
-                ));
+                out.push(
+                    Problem::spec(
+                        "S11",
+                        Severity::Error,
+                        format!("a column in table `{table_name}` has an empty `name`"),
+                        col.name.span.clone(),
+                    )
+                    .with_expected("Every column must have a non-empty `name`."),
+                );
             }
         }
     }
@@ -669,7 +681,7 @@ fn typed_representation(col: &Column) -> Option<(&'static str, &[Spanned<Scalar>
 }
 
 fn check_value_types(dict: &DataDict, out: &mut ProblemSet) {
-    for (table_name, table) in &dict.tables {
+    for table in dict.tables.values() {
         for col in &table.columns {
             let type_name = match &col.col_type {
                 Some(t) => t.value.as_str(),
@@ -682,21 +694,20 @@ fn check_value_types(dict: &DataDict, out: &mut ProblemSet) {
                 if value_matches_type(type_name, &v.value) {
                     continue;
                 }
-                out.push(Problem::spec(
-                    "S12",
-                    Severity::Error,
-                    format!(
-                        "column `{}.{}` has type `{}` but its `{}` value `{}` is {}; expected {}",
-                        table_name,
-                        col.name.value,
-                        type_name,
+                out.push(
+                    Problem::spec(
+                        "S12",
+                        Severity::Error,
+                        format!("`{}` is {}", v.value.display(), v.value.noun(),),
+                        v.span.clone(),
+                    )
+                    .with_expected(format!(
+                        "Each `{}` value of a `{}` column must be {}.",
                         key,
-                        v.value.display(),
-                        v.value.noun(),
+                        type_name,
                         expected_noun(type_name),
-                    ),
-                    v.span.clone(),
-                ));
+                    )),
+                );
             }
         }
     }
@@ -737,7 +748,7 @@ fn expected_noun(type_name: &str) -> &'static str {
 // --- S13 --------------------------------------------------------------
 
 fn check_range_order(dict: &DataDict, out: &mut ProblemSet) {
-    for (table_name, table) in &dict.tables {
+    for table in dict.tables.values() {
         for col in &table.columns {
             let type_name = match &col.col_type {
                 Some(t) => t.value.as_str(),
@@ -751,18 +762,19 @@ fn check_range_order(dict: &DataDict, out: &mut ProblemSet) {
             // meaningless, so `range_descending` only fires when both bounds
             // parse for the column's type.
             if range_descending(type_name, &lo.value, &hi.value) {
-                out.push(Problem::spec(
-                    "S13",
-                    Severity::Error,
-                    format!(
-                        "column `{}.{}` has an invalid range: minimum `{}` is greater than maximum `{}`",
-                        table_name,
-                        col.name.value,
-                        lo.value.display(),
-                        hi.value.display(),
-                    ),
-                    lo.span.clone(),
-                ));
+                out.push(
+                    Problem::spec(
+                        "S13",
+                        Severity::Error,
+                        format!(
+                            "minimum `{}` is greater than maximum `{}`",
+                            lo.value.display(),
+                            hi.value.display(),
+                        ),
+                        lo.span.clone(),
+                    )
+                    .with_expected("A range's minimum must be less than or equal to its maximum."),
+                );
             }
         }
     }
@@ -810,7 +822,7 @@ fn check_learn_more(root: &YamlWithSourceInfo, out: &mut ProblemSet) {
         Problem::spec(
             "S09",
             Severity::Warning,
-            "document is missing the recommended `$learn_more` key".to_string(),
+            "The document is missing the recommended `$learn_more` key.".to_string(),
             span,
         )
         .with_hint(format!(

@@ -443,7 +443,7 @@ fn s12_wrong_value_type() {
 fn s12_wrong_value_type_errors() {
     assert_invalid(
         fixture("spec/s12-wrong-value-type.yaml"),
-        &["S12", "expected a number"],
+        &["S12", "must be a number"],
     );
 }
 
@@ -479,7 +479,7 @@ fn s13_descending_range() {
 fn s13_descending_range_errors() {
     assert_invalid(
         fixture("spec/s13-descending-range.yaml"),
-        &["S13", "invalid range"],
+        &["S13", "greater than maximum"],
     );
 }
 

@@ -71,11 +71,17 @@ Implementation, one module per level (entry points re-exported at the crate root
 | metadata (`M##`) | `validate_meta.rs` | `validate-meta` |
 | data (`D##`) | `validate_data.rs` | `validate-data` |
 
-Every level reports through one vocabulary in `problem.rs`: a `Problem` (a `code`, `severity`, `message`, optional `column`/`hint`/`span`, and a flattened `ProblemKind` tag covering pre-flight, spec, metadata, and data findings alike) and a `ProblemSet` (one vector of them plus the `SourceContext` for rendering). `serde` derives the JSON wire format directly; there is no separate error type. "Fatal" is not a field — a level pushes its problems and returns early to stop the run, and the meta/data levels descend only while `ProblemSet::has_errors()` is false. `Level` and the `select_table` helper live in `lib.rs`. Each level's entry point drives its own flow (no central dispatcher).
+Every level reports through one vocabulary in `problem.rs`: a `Problem` (a `code`, `severity`, `message`, optional `expected`/`column`/`hint`/`span`, and a flattened `ProblemKind` tag covering pre-flight, spec, metadata, and data findings alike) and a `ProblemSet` (one vector of them plus the `SourceContext` for rendering). `serde` derives the JSON wire format directly; there is no separate error type. "Fatal" is not a field — a level pushes its problems and returns early to stop the run, and the meta/data levels descend only while `ProblemSet::has_errors()` is false. `Level` and the `select_table` helper live in `lib.rs`. Each level's entry point drives its own flow (no central dispatcher).
 
 Test fixtures for the spec rules are in `crates/data-dict/tests/fixtures/{valid,invalid,spec}/`. Each fixture has a `# expected: ...` header documenting the intended outcome. Integration tests mirror the levels: `tests/validate_spec.rs` / `validate_meta.rs` / `validate_data.rs`.
 
-Diagnostic hints always start with a capital letter.
+### Diagnostic wording
+
+A diagnostic is split across two parts. `expected` is a general statement of the problem (rendered as the title line, beside the code); `message` reports what was found at the offending location (rendered as the inline source label). Prefer this split whenever a general rule can be stated.
+
+- `expected` is one concise but informative statement, in sentence case, ending with a full stop. State what *must* hold when the cause is clear (e.g. an incorrect type or size: "A range's minimum must be less than or equal to its maximum."); use *can't* when you can't state what was expected.
+- `message` (the "found" detail) is a lowercase fragment with no full stop — it names the concrete value or location ("minimum `100` is greater than maximum `10`").
+- Diagnostic hints always start with a capital letter.
 
 If a schema change causes `site/examples/` to fail, don't fix them. Instead report them to me so I can fix upstream.
 
