@@ -2,42 +2,10 @@
 source: crates/data-dict/tests/validate_spec.rs
 expression: "failing_diagnostic(\"spec/s05-conflicts-not-on-both-sides.yaml\")"
 ---
-Error: [S07] String, number, and ID columns must describe their data with `examples`.
-    ╭─[ spec/s05-conflicts-not-on-both-sides.yaml:12:15 ]
-    │
- 12 │       - name: id
-    │               ─┬  
-    │                ╰── `food.id` has type `number(id)` but has no `examples`
-────╯
-
-Error: [S07] String, number, and ID columns must describe their data with `examples`.
-    ╭─[ spec/s05-conflicts-not-on-both-sides.yaml:20:15 ]
-    │
- 20 │       - name: id
-    │               ─┬  
-    │                ╰── `food_nutrient.id` has type `number(id)` but has no `examples`
-────╯
-
-Error: [S07] String, number, and ID columns must describe their data with `examples`.
-    ╭─[ spec/s05-conflicts-not-on-both-sides.yaml:23:15 ]
-    │
- 23 │       - name: food_id
-    │               ───┬───  
-    │                  ╰───── `food_nutrient.food_id` has type `number(id)` but has no `examples`
-────╯
-
-Error: [S07] Ordered numeric and date columns must describe their bounds with `range`.
-    ╭─[ spec/s05-conflicts-not-on-both-sides.yaml:26:15 ]
-    │
- 26 │       - name: amount
-    │               ───┬──  
-    │                  ╰──── `food_nutrient.amount` has type `number(quantity)` but has no `range`
-────╯
-
 Error: [S05] A `conflicts` entry must name a column on both sides of the join.
-    ╭─[ spec/s05-conflicts-not-on-both-sides.yaml:32:17 ]
+    ╭─[ spec/s05-conflicts-not-on-both-sides.yaml:36:17 ]
     │
- 32 │     conflicts: [amount]
+ 36 │     conflicts: [amount]
     │                 ───┬──  
     │                    ╰──── `amount` is not a column of `food`
 ────╯

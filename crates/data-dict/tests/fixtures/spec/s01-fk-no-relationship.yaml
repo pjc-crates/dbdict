@@ -13,9 +13,11 @@ tables:
       - name: id
         type: number(id)
         constraints: [primary_key]
+        examples: [1, 2]
       - name: food_category_id
         type: number(id)
         constraints: [foreign_key]
+        examples: [1, 2]
 
   food_category:
     source:
@@ -24,3 +26,4 @@ tables:
       - name: id
         type: number(id)
         constraints: [primary_key]
+        examples: [1, 2]

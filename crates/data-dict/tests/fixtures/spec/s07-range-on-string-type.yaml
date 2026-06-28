@@ -1,0 +1,15 @@
+# expected: S07
+# `range` is only allowed on ordered numeric / date / datetime columns, not on
+# strings. `examples` is supplied so the only finding is the misplaced `range`.
+
+$version: 0.1.0
+
+tables:
+  t:
+    source:
+      parquet: t.parquet
+    columns:
+      - name: c
+        type: string
+        examples: [a, z]
+        range: ["a", "z"]

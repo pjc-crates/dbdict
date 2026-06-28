@@ -14,9 +14,11 @@ tables:
       - name: id
         type: number(id)
         constraints: [primary_key]
+        examples: [1, 2]
       - name: account_id
         type: number(id)
         constraints: [required]
+        examples: [1, 2]
 
   account:
     source:
@@ -25,6 +27,7 @@ tables:
       - name: account_id
         type: number(id)
         constraints: [required]
+        examples: [1, 2]
 
 relationships:
   - cardinality: many-to-one

@@ -1,6 +1,7 @@
 # expected: S03
 # The relationship references `food_category.identifier`, but the column on
-# `food_category` is called `id`.
+# `food_category` is called `id`. `food_category_id` is left unconstrained so a
+# `foreign_key` doesn't add S01 on top.
 
 $version: "0.1.0"
 
@@ -12,9 +13,10 @@ tables:
       - name: id
         type: number(id)
         constraints: [primary_key]
+        examples: [1, 2]
       - name: food_category_id
         type: number(id)
-        constraints: [foreign_key]
+        examples: [1, 2]
 
   food_category:
     source:
@@ -23,6 +25,7 @@ tables:
       - name: id
         type: number(id)
         constraints: [primary_key]
+        examples: [1, 2]
 
 relationships:
   - cardinality: many-to-one

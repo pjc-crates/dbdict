@@ -1,7 +1,7 @@
 # expected: S02
 # The relationship references `category` but that table doesn't exist; the
-# defined table is `food_category`. S03 would also fire on `category.id`
-# but S02 should be present.
+# defined table is `food_category`. `food_category_id` is left unconstrained so
+# only S02 fires (a `foreign_key` would add S01, a missing column S03).
 
 $version: "0.1.0"
 
@@ -13,9 +13,10 @@ tables:
       - name: id
         type: number(id)
         constraints: [primary_key]
+        examples: [1, 2]
       - name: food_category_id
         type: number(id)
-        constraints: [foreign_key]
+        examples: [1, 2]
 
   food_category:
     source:
@@ -24,6 +25,7 @@ tables:
       - name: id
         type: number(id)
         constraints: [primary_key]
+        examples: [1, 2]
 
 relationships:
   - cardinality: many-to-one

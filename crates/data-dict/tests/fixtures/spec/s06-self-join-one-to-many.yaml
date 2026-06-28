@@ -1,8 +1,7 @@
-# expected: S06, S07
+# expected: S06
 # Recreated from the bundled `otters` example. A `one-to-many` self-join
 # `otters.pup_number = otters.otter_no` makes `pup_number` the "one" side, so
-# it must be `primary_key` or `unique`; it is neither, so S06 fires. The
-# `comments` column (type: string) also lacks `examples`, so S07 fires.
+# it must be `primary_key` or `unique`; it is neither, so S06 fires.
 
 $version: "0.1.0"
 
@@ -20,6 +19,7 @@ tables:
         examples: [1, 2]
       - name: comments
         type: string
+        examples: ["found in river", "tagged"]
 
 relationships:
   - cardinality: one-to-many

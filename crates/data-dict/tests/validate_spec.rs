@@ -323,8 +323,7 @@ fn s06_cardinality_mismatch() {
 }
 
 // Recreated from the bundled `otters` example: a one-to-many self-join whose
-// "one" side is not unique (S06), alongside a string column missing
-// `examples` (S07). Guards that both findings surface together.
+// "one" side is not unique. Exercises the self-join orientation of S06.
 #[test]
 fn s06_self_join_one_to_many() {
     insta::assert_snapshot!(failing_diagnostic("spec/s06-self-join-one-to-many.yaml"));
@@ -361,8 +360,8 @@ fn s07_wrong_rep_on_enum() {
 }
 
 #[test]
-fn s08_range_on_string_type() {
-    insta::assert_snapshot!(failing_diagnostic("spec/s08-range-on-string-type.yaml"));
+fn s07_range_on_string_type() {
+    insta::assert_snapshot!(failing_diagnostic("spec/s07-range-on-string-type.yaml"));
 }
 
 // `units` is valid only on `number(quantity)`. A quantity column with units
