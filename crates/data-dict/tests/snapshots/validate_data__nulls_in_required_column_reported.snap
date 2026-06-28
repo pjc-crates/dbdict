@@ -1,0 +1,6 @@
+---
+source: crates/data-dict/tests/validate_data.rs
+expression: "result.render().join(\"\\n\")"
+---
+error [D01]: A required column must not contain nulls.
+  `weight` has 1 null value (rows: 2)

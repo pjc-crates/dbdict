@@ -77,7 +77,7 @@ Test fixtures for the spec rules are in `crates/data-dict/tests/fixtures/{valid,
 
 ### Diagnostic wording
 
-A diagnostic is split across two parts. `expected` is a general statement of the problem (rendered as the title line, beside the code); `message` reports what was found at the offending location (rendered as the inline source label). Prefer this split whenever a general rule can be stated.
+A diagnostic is split across two parts: `expected` is a general statement of the problem, and `message` reports what was found at the offending location. `expected` leads the rendering (the title line beside the code for span-located spec problems; the headline line for the plain-rendered metadata/data problems) and `message` follows it. Prefer this split whenever a general rule can be stated, at every level (`S`/`M`/`D`).
 
 - `expected` is one concise but informative statement, in sentence case, ending with a full stop. State what *must* hold when the cause is clear (e.g. an incorrect type or size: "A range's minimum must be less than or equal to its maximum."); use *can't* when you can't state what was expected.
 - `message` (the "found" detail) is a lowercase fragment with no full stop — it names the concrete value or location ("minimum `100` is greater than maximum `10`").

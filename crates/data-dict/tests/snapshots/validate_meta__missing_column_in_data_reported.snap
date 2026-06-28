@@ -1,0 +1,6 @@
+---
+source: crates/data-dict/tests/validate_meta.rs
+expression: "problems.render().join(\"\\n\")"
+---
+error [M02]: Every column in the dictionary must be present in the data.
+  `height` is in the dictionary but missing from the data

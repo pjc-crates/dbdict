@@ -1,0 +1,6 @@
+---
+source: crates/data-dict/tests/validate_meta.rs
+expression: "problems.render().join(\"\\n\")"
+---
+error [M01]: A column's data must match its declared type.
+  `weight` is declared `string` but the data is `number`

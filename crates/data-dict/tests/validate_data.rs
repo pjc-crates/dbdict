@@ -147,6 +147,7 @@ fn nulls_in_required_column_reported() {
         "got {:?}",
         result.items
     );
+    insta::assert_snapshot!(result.render().join("\n"));
 }
 
 #[test]

@@ -163,7 +163,7 @@ impl Problem {
             message: column_message(&column, &kind),
             column: Some(column),
             hint: None,
-            expected: None,
+            expected: column_expected(&kind),
             span: None,
             kind,
         }
@@ -247,20 +247,42 @@ impl Problem {
     }
 }
 
-/// The human-readable message for a column-level problem.
+/// The general statement of a column-level problem — what the spec expects,
+/// stated independently of the offending column. Leads the rendering; the
+/// per-column finding from [`column_message`] follows it.
+fn column_expected(kind: &ProblemKind) -> Option<String> {
+    Some(
+        match kind {
+            ProblemKind::TypeMismatch { .. } => "A column's data must match its declared type.",
+            ProblemKind::MissingInData => {
+                "Every column in the dictionary must be present in the data."
+            }
+            ProblemKind::ExtraInData { .. } => {
+                "Every column in the data should be described in the dictionary."
+            }
+            ProblemKind::NullsInRequired { .. } => "A required column must not contain nulls.",
+            // The remaining kinds are never column-located.
+            _ => return None,
+        }
+        .to_string(),
+    )
+}
+
+/// The "found" detail for a column-level problem: a lowercase fragment naming
+/// the offending column and what was found, paired with [`column_expected`].
 fn column_message(column: &str, kind: &ProblemKind) -> String {
     match kind {
         ProblemKind::TypeMismatch { declared, actual } => {
-            format!("column \"{column}\": declared {declared}, data is {actual}")
+            format!("`{column}` is declared `{declared}` but the data is `{actual}`")
         }
         ProblemKind::MissingInData => {
-            format!("column \"{column}\": described in dictionary but missing from data")
+            format!("`{column}` is in the dictionary but missing from the data")
         }
         ProblemKind::ExtraInData { actual } => {
-            format!("column \"{column}\": present in data ({actual}) but not in dictionary")
+            format!("`{column}` is in the data (`{actual}`) but not the dictionary")
         }
         ProblemKind::NullsInRequired { count, rows } => format!(
-            "column \"{column}\": required but has {count} null value{} ({})",
+            "`{column}` has {count} null value{} ({})",
             if *count == 1 { "" } else { "s" },
             format_rows(rows, *count),
         ),
@@ -379,7 +401,8 @@ mod tests {
             serde_json::json!({
                 "code": "M01",
                 "severity": "error",
-                "message": "column \"weight\": declared string, data is number",
+                "message": "`weight` is declared `string` but the data is `number`",
+                "expected": "A column's data must match its declared type.",
                 "column": "weight",
                 "kind": "type_mismatch",
                 "declared": "string",
@@ -398,6 +421,23 @@ mod tests {
         assert_eq!(v["message"], "bad column");
         assert_eq!(v["hint"], "fix it");
         assert!(v.get("column").is_none());
+    }
+
+    #[test]
+    fn column_problem_renders_expected_then_found() {
+        let p = Problem::column(
+            Severity::Error,
+            "weight",
+            ProblemKind::TypeMismatch {
+                declared: "string".into(),
+                actual: "number".into(),
+            },
+        );
+        assert_eq!(
+            p.to_text(&SourceContext::new()),
+            "error [M01]: A column's data must match its declared type.\n  \
+             `weight` is declared `string` but the data is `number`",
+        );
     }
 
     #[test]

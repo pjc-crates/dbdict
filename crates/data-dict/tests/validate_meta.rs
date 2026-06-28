@@ -71,6 +71,7 @@ fn type_mismatch_reported() {
         [Problem { column: Some(column), code: Some(code), kind: ProblemKind::TypeMismatch { declared, actual }, .. }]
             if column == "weight" && *code == "M01" && declared == "string" && actual == "number"
     ));
+    insta::assert_snapshot!(problems.render().join("\n"));
 }
 
 #[test]
@@ -109,6 +110,7 @@ fn extra_column_in_data_is_warning() {
         [Problem { column: Some(column), code: Some(code), severity, kind: ProblemKind::ExtraInData { actual }, .. }]
             if column == "weight" && *code == "M03" && actual == "number" && *severity == Severity::Warning
     ));
+    insta::assert_snapshot!(problems.render().join("\n"));
 }
 
 #[test]
@@ -208,6 +210,7 @@ fn missing_column_in_data_reported() {
         problems.items.as_slice(),
         [Problem { column: Some(column), kind: ProblemKind::MissingInData, .. }] if column == "height"
     ));
+    insta::assert_snapshot!(problems.render().join("\n"));
 }
 
 #[test]

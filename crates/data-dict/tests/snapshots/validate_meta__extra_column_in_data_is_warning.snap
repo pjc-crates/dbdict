@@ -1,0 +1,6 @@
+---
+source: crates/data-dict/tests/validate_meta.rs
+expression: "problems.render().join(\"\\n\")"
+---
+warning [M03]: Every column in the data should be described in the dictionary.
+  `weight` is in the data (`number`) but not the dictionary
