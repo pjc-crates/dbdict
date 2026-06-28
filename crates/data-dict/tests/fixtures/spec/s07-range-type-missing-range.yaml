@@ -4,13 +4,10 @@ $version: 0.1.0
 
 tables:
   t:
-    description: A table.
     source:
       parquet: t.parquet
     columns:
       - name: weight
         type: number(quantity)
-        description: Weight in kg.
       - name: recorded_at
         type: date
-        description: Date recorded.

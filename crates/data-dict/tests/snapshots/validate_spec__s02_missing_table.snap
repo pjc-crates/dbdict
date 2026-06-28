@@ -1,43 +1,44 @@
 ---
 source: crates/data-dict/tests/validate_spec.rs
+assertion_line: 292
 expression: "failing_diagnostic(\"spec/s02-missing-table.yaml\")"
 ---
 Error: [S07]
-    ╭─[ spec/s02-missing-table.yaml:14:15 ]
+    ╭─[ spec/s02-missing-table.yaml:13:15 ]
     │
- 14 │       - name: id
+ 13 │       - name: id
     │               ─┬  
     │                ╰── column `food.id` has type `number(id)` but is missing the expected `examples` property
 ────╯
 
 Error: [S01]
-    ╭─[ spec/s02-missing-table.yaml:18:15 ]
+    ╭─[ spec/s02-missing-table.yaml:16:15 ]
     │
- 18 │       - name: food_category_id
+ 16 │       - name: food_category_id
     │               ────────┬───────  
     │                       ╰───────── column `food.food_category_id` is marked `foreign_key` but no `relationships` entry points it at a `primary_key` column
 ────╯
 
 Error: [S07]
-    ╭─[ spec/s02-missing-table.yaml:18:15 ]
+    ╭─[ spec/s02-missing-table.yaml:16:15 ]
     │
- 18 │       - name: food_category_id
+ 16 │       - name: food_category_id
     │               ────────┬───────  
     │                       ╰───────── column `food.food_category_id` has type `number(id)` but is missing the expected `examples` property
 ────╯
 
 Error: [S07]
-    ╭─[ spec/s02-missing-table.yaml:28:15 ]
+    ╭─[ spec/s02-missing-table.yaml:24:15 ]
     │
- 28 │       - name: id
+ 24 │       - name: id
     │               ─┬  
     │                ╰── column `food_category.id` has type `number(id)` but is missing the expected `examples` property
 ────╯
 
 Error: [S02]
-    ╭─[ spec/s02-missing-table.yaml:36:35 ]
+    ╭─[ spec/s02-missing-table.yaml:30:35 ]
     │
- 36 │     join: food.food_category_id = category.id
+ 30 │     join: food.food_category_id = category.id
     │                                   ─────┬─────  
     │                                        ╰─────── relationship references table `category`, which is not defined in `tables`
 ────╯

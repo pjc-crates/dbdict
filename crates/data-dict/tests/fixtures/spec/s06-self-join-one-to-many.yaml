@@ -8,24 +8,19 @@ $version: "0.1.0"
 
 tables:
   otters:
-    description: Sea otters and their pups.
     source:
       parquet: otters.parquet
     columns:
       - name: otter_no
         type: number(id)
         constraints: [primary_key]
-        description: Otter id.
         examples: [1, 2, 3]
       - name: pup_number
         type: number(id)
-        description: The otter's mother (intentionally not unique to trigger S06).
         examples: [1, 2]
       - name: comments
         type: string
-        description: Free-text notes (intentionally missing examples to trigger S07).
 
 relationships:
-  - description: Each mother otter has many pups.
-    cardinality: one-to-many
+  - cardinality: one-to-many
     join: otters.pup_number = otters.otter_no

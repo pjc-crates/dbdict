@@ -5,11 +5,9 @@ $version: 0.1.0
 
 tables:
   t:
-    description: A table.
     source:
       parquet: t.parquet
     columns:
       - name: c
         type: string
-        description: A column.
         range: ["a", "z"]

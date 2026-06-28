@@ -1,35 +1,36 @@
 ---
 source: crates/data-dict/tests/validate_spec.rs
+assertion_line: 322
 expression: "failing_diagnostic(\"spec/s06-cardinality-mismatch.yaml\")"
 ---
 Error: [S07]
-    ╭─[ spec/s06-cardinality-mismatch.yaml:15:15 ]
+    ╭─[ spec/s06-cardinality-mismatch.yaml:14:15 ]
     │
- 15 │       - name: id
+ 14 │       - name: id
     │               ─┬  
     │                ╰── column `transaction.id` has type `number(id)` but is missing the expected `examples` property
 ────╯
 
 Error: [S07]
-    ╭─[ spec/s06-cardinality-mismatch.yaml:19:15 ]
+    ╭─[ spec/s06-cardinality-mismatch.yaml:17:15 ]
     │
- 19 │       - name: account_id
+ 17 │       - name: account_id
     │               ─────┬────  
     │                    ╰────── column `transaction.account_id` has type `number(id)` but is missing the expected `examples` property
 ────╯
 
 Error: [S07]
-    ╭─[ spec/s06-cardinality-mismatch.yaml:29:15 ]
+    ╭─[ spec/s06-cardinality-mismatch.yaml:25:15 ]
     │
- 29 │       - name: account_id
+ 25 │       - name: account_id
     │               ─────┬────  
     │                    ╰────── column `account.account_id` has type `number(id)` but is missing the expected `examples` property
 ────╯
 
 Error: [S06]
-    ╭─[ spec/s06-cardinality-mismatch.yaml:36:18 ]
+    ╭─[ spec/s06-cardinality-mismatch.yaml:30:18 ]
     │
- 36 │     cardinality: many-to-one
+ 30 │   - cardinality: many-to-one
     │                  ─────┬─────  
     │                       ╰─────── cardinality is `many-to-one` but the right-side join column on `account` is not marked `primary_key` or `unique`
 ────╯

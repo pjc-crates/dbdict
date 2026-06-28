@@ -8,30 +8,24 @@ $version: "0.1.0"
 
 tables:
   transaction:
-    description: Transactions.
     source:
       parquet: transaction.parquet
     columns:
       - name: id
         type: number(id)
         constraints: [primary_key]
-        description: Transaction id.
       - name: account_id
         type: number(id)
         constraints: [required]
-        description: Account id (no FK constraint).
 
   account:
-    description: Accounts.
     source:
       parquet: account.parquet
     columns:
       - name: account_id
         type: number(id)
         constraints: [required]
-        description: Account id; intentionally not unique to trigger S06.
 
 relationships:
-  - description: Each transaction belongs to one account.
-    cardinality: many-to-one
+  - cardinality: many-to-one
     join: transaction.account_id = account.account_id

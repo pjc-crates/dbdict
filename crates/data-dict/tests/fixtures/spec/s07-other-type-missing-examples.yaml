@@ -4,13 +4,10 @@ $version: 0.1.0
 
 tables:
   t:
-    description: A table.
     source:
       parquet: t.parquet
     columns:
       - name: label
         type: string
-        description: A label.
       - name: code
         type: number(id)
-        description: A code.

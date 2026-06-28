@@ -4,6 +4,5 @@
 $version: 0.1.0
 
 relationships:
-  - description: A bogus relationship.
-    cardinality: many-to-many
+  - cardinality: many-to-many
     join: a.x = b.y

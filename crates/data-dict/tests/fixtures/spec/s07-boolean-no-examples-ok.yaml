@@ -5,7 +5,6 @@ $version: "0.1.0"
 
 tables:
   account:
-    description: Accounts.
     source:
       parquet: account.parquet
     columns:
@@ -15,4 +14,3 @@ tables:
         examples: [1, 2, 3, 4, 5]
       - name: is_active
         type: boolean
-        description: Whether the account is active.

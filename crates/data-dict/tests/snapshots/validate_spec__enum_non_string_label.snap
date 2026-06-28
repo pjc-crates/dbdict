@@ -1,11 +1,12 @@
 ---
 source: crates/data-dict/tests/validate_spec.rs
+assertion_line: 497
 expression: "failing_diagnostic(\"invalid/enum-non-string-label.yaml\")"
 ---
 Error: [Q-1-11] YAML Validation Failed
-    ╭─[ invalid/enum-non-string-label.yaml:14:18 ]
+    ╭─[ invalid/enum-non-string-label.yaml:13:18 ]
     │
- 14 │         values: {active: 1, inactive: 2}
+ 13 │         values: {active: 1, inactive: 2}
     │                  ───────────┬──────────  
     │                             ╰──────────── Expected array, got object
 ────╯

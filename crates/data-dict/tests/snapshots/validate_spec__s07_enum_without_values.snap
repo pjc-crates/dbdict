@@ -1,11 +1,12 @@
 ---
 source: crates/data-dict/tests/validate_spec.rs
+assertion_line: 335
 expression: "failing_diagnostic(\"spec/s07-enum-without-values.yaml\")"
 ---
 Error: [S07]
-    ╭─[ spec/s07-enum-without-values.yaml:11:15 ]
+    ╭─[ spec/s07-enum-without-values.yaml:10:15 ]
     │
- 11 │       - name: c
+ 10 │       - name: c
     │               ┬  
     │               ╰── column `t.c` has type `enum` but is missing the required `values` property
 ────╯

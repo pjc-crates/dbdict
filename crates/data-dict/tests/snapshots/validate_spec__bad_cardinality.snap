@@ -1,11 +1,12 @@
 ---
 source: crates/data-dict/tests/validate_spec.rs
-expression: "invalid_diagnostic(\"invalid/bad-cardinality.yaml\")"
+assertion_line: 250
+expression: "failing_diagnostic(\"invalid/bad-cardinality.yaml\")"
 ---
 Error: [Q-1-12] YAML Validation Failed
-   ╭─[ invalid/bad-cardinality.yaml:8:18 ]
+   ╭─[ invalid/bad-cardinality.yaml:7:18 ]
    │
- 8 │     cardinality: many-to-many
+ 7 │   - cardinality: many-to-many
    │                  ──────┬─────  
    │                        ╰─────── Value must be one of: "one-to-one", "one-to-many", "many-to-one", got '"many-to-many"'
 ───╯
