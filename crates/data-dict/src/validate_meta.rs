@@ -33,7 +33,13 @@ pub(crate) fn meta_issues(table: &Table, actual: &[(String, String)], out: &mut 
 
 fn validate_m04_source(table: &Table, out: &mut ProblemSet) {
     if table.source.is_none() {
-        out.push(Problem::missing_source(&table.name.value));
+        out.push_located(
+            ProblemKind::MissingSource,
+            Severity::Error,
+            "A table validated against data must declare a `source`.",
+            "has no `source`",
+            [table.name.span.clone()],
+        );
     }
 }
 
@@ -47,14 +53,20 @@ fn validate_m01_column_types(table: &Table, actual: &[(String, String)], out: &m
         if let Some(declared) = &col.col_type
             && !types_compatible(&declared.value, actual_type)
         {
-            out.push(Problem::column(
-                Severity::Error,
-                col.name.value.clone(),
+            out.push_located(
                 ProblemKind::TypeMismatch {
                     declared: declared.value.clone(),
                     actual: actual_type.to_string(),
                 },
-            ));
+                Severity::Error,
+                "A column's data must match its declared type.",
+                format!("the data is `{actual_type}`"),
+                [
+                    table.name.span.clone(),
+                    col.name.span.clone(),
+                    declared.span.clone(),
+                ],
+            );
         }
     }
 }
@@ -62,11 +74,13 @@ fn validate_m01_column_types(table: &Table, actual: &[(String, String)], out: &m
 fn validate_m02_missing_columns(table: &Table, actual: &[(String, String)], out: &mut ProblemSet) {
     for col in &table.columns {
         if !actual.iter().any(|(n, _)| n == &col.name.value) {
-            out.push(Problem::column(
-                Severity::Error,
-                col.name.value.clone(),
+            out.push_located(
                 ProblemKind::MissingInData,
-            ));
+                Severity::Error,
+                "Every column in the dictionary must be present in the data.",
+                "is missing from the data",
+                [table.name.span.clone(), col.name.span.clone()],
+            );
         }
     }
 }
@@ -74,13 +88,9 @@ fn validate_m02_missing_columns(table: &Table, actual: &[(String, String)], out:
 fn validate_m03_extra_columns(table: &Table, actual: &[(String, String)], out: &mut ProblemSet) {
     for (name, actual_type) in actual {
         if table.column(name).is_none() {
-            out.push(Problem::column(
-                Severity::Warning,
-                name.clone(),
-                ProblemKind::ExtraInData {
-                    actual: actual_type.clone(),
-                },
-            ));
+            // The column exists only in the data, so there is no dictionary node
+            // to point at; it is named in the message instead.
+            out.push(Problem::undocumented_column(name, actual_type.clone()));
         }
     }
 }

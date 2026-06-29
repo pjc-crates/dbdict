@@ -171,34 +171,22 @@ impl Problem {
         }
     }
 
-    /// A column-level problem (`M##`/`D##`), located by a column name. The code
-    /// is derived from `kind`, and the human message is rendered from the two.
-    pub(crate) fn column(severity: Severity, column: impl Into<String>, kind: ProblemKind) -> Self {
-        let column = column.into();
+    /// `M03` — a column present in the data but not described by the
+    /// dictionary. It exists only in the data, so it has no dictionary location
+    /// and is named in the message rather than highlighted in source.
+    pub(crate) fn undocumented_column(name: &str, actual_type: impl Into<String>) -> Self {
+        let actual = actual_type.into();
         Problem {
-            code: kind.code(),
-            severity,
-            message: column_message(&column, &kind),
-            column: Some(column),
-            expected: column_expected(&kind),
+            code: Some("M03"),
+            severity: Severity::Warning,
+            message: format!("`{name}` is in the data (`{actual}`) but not the dictionary"),
+            column: Some(name.to_string()),
+            expected: Some(
+                "Every column in the data should be described in the dictionary.".into(),
+            ),
             span: None,
             context: Vec::new(),
-            kind,
-        }
-    }
-
-    /// `M04` — a table validated against data declares no `source`.
-    /// Table-located (named in the message), so it carries no `column`.
-    pub(crate) fn missing_source(table_name: &str) -> Self {
-        Problem {
-            code: Some("M04"),
-            severity: Severity::Error,
-            message: format!("table `{table_name}` has no `source`"),
-            column: None,
-            expected: Some("A table validated against data must declare a `source`.".into()),
-            span: None,
-            context: Vec::new(),
-            kind: ProblemKind::MissingSource,
+            kind: ProblemKind::ExtraInData { actual },
         }
     }
 
@@ -279,50 +267,6 @@ impl Problem {
     }
 }
 
-/// The general statement of a column-level problem — what the spec expects,
-/// stated independently of the offending column. Leads the rendering; the
-/// per-column finding from [`column_message`] follows it.
-fn column_expected(kind: &ProblemKind) -> Option<String> {
-    Some(
-        match kind {
-            ProblemKind::TypeMismatch { .. } => "A column's data must match its declared type.",
-            ProblemKind::MissingInData => {
-                "Every column in the dictionary must be present in the data."
-            }
-            ProblemKind::ExtraInData { .. } => {
-                "Every column in the data should be described in the dictionary."
-            }
-            ProblemKind::NullsInRequired { .. } => "A required column must not contain nulls.",
-            // The remaining kinds are never column-located.
-            _ => return None,
-        }
-        .to_string(),
-    )
-}
-
-/// The "found" detail for a column-level problem: a lowercase fragment naming
-/// the offending column and what was found, paired with [`column_expected`].
-fn column_message(column: &str, kind: &ProblemKind) -> String {
-    match kind {
-        ProblemKind::TypeMismatch { declared, actual } => {
-            format!("`{column}` is declared `{declared}` but the data is `{actual}`")
-        }
-        ProblemKind::MissingInData => {
-            format!("`{column}` is in the dictionary but missing from the data")
-        }
-        ProblemKind::ExtraInData { actual } => {
-            format!("`{column}` is in the data (`{actual}`) but not the dictionary")
-        }
-        ProblemKind::NullsInRequired { count, rows } => format!(
-            "`{column}` has {count} null value{} ({})",
-            if *count == 1 { "" } else { "s" },
-            format_rows(rows, *count),
-        ),
-        // The remaining kinds are never column-located.
-        _ => String::new(),
-    }
-}
-
 /// Every problem found while validating a document, with the [`SourceContext`]
 /// needed to render the span-located ones. Levels push into a `ProblemSet` as
 /// they run; the driver descends to the next level only while [`status`] is not
@@ -356,16 +300,16 @@ impl ProblemSet {
         self.items.push(problem);
     }
 
-    /// Push a spec problem (`S##`): `expected` states the rule, `actual` reports
-    /// what was found, and `spans` locates it — the **last** span is the primary
-    /// highlight carrying `actual`, and any preceding spans are shown faded as
-    /// enclosing context (outermost-first, e.g. the table then the column).
-    /// `spans` must be non-empty. A check with no rule statement (a bare parse
-    /// failure) builds its [`Problem`] directly.
-    fn push_spec(
+    /// Push a problem located in the document: `expected` states the rule,
+    /// `actual` reports what was found, and `spans` locates it — the **last**
+    /// span is the primary highlight carrying `actual`, and any preceding spans
+    /// are shown faded as enclosing context (outermost-first, e.g. the table
+    /// then the column). `spans` must be non-empty.
+    fn push_located_problem(
         &mut self,
-        severity: Severity,
         code: &'static str,
+        kind: ProblemKind,
+        severity: Severity,
         expected: impl Into<String>,
         actual: impl Into<String>,
         spans: impl IntoIterator<Item = SourceInfo>,
@@ -373,14 +317,23 @@ impl ProblemSet {
         let mut spans: Vec<SourceInfo> = spans.into_iter().collect();
         let primary = spans
             .pop()
-            .expect("push_spec needs at least the primary span");
-        let mut problem = Problem::spec(code, severity, actual, primary);
-        problem.expected = Some(expected.into());
-        problem.context = spans;
-        self.push(problem);
+            .expect("a located problem needs at least the primary span");
+        self.push(Problem {
+            code: Some(code),
+            severity,
+            message: actual.into(),
+            column: None,
+            expected: Some(expected.into()),
+            span: Some(primary),
+            context: spans,
+            kind,
+        });
     }
 
-    /// Push a spec problem at error severity; see [`push_spec`](Self::push_spec).
+    /// Push a spec problem (`S##`) at error severity; see
+    /// [`push_located_problem`](Self::push_located_problem) for the `spans`
+    /// convention. A spec check with no rule statement (a bare parse failure)
+    /// builds its [`Problem`] directly.
     pub(crate) fn push_spec_error(
         &mut self,
         code: &'static str,
@@ -388,10 +341,17 @@ impl ProblemSet {
         actual: impl Into<String>,
         spans: impl IntoIterator<Item = SourceInfo>,
     ) {
-        self.push_spec(Severity::Error, code, expected, actual, spans);
+        self.push_located_problem(
+            code,
+            ProblemKind::Spec,
+            Severity::Error,
+            expected,
+            actual,
+            spans,
+        );
     }
 
-    /// Push a spec problem at warning severity; see [`push_spec`](Self::push_spec).
+    /// Push a spec problem at warning severity; see [`push_spec_error`](Self::push_spec_error).
     pub(crate) fn push_spec_warning(
         &mut self,
         code: &'static str,
@@ -399,7 +359,32 @@ impl ProblemSet {
         actual: impl Into<String>,
         spans: impl IntoIterator<Item = SourceInfo>,
     ) {
-        self.push_spec(Severity::Warning, code, expected, actual, spans);
+        self.push_located_problem(
+            code,
+            ProblemKind::Spec,
+            Severity::Warning,
+            expected,
+            actual,
+            spans,
+        );
+    }
+
+    /// Push a metadata/data problem located at the dictionary node it concerns;
+    /// `code` and any structured payload come from `kind`. See
+    /// [`push_located_problem`](Self::push_located_problem) for the `spans`
+    /// convention.
+    pub(crate) fn push_located(
+        &mut self,
+        kind: ProblemKind,
+        severity: Severity,
+        expected: impl Into<String>,
+        actual: impl Into<String>,
+        spans: impl IntoIterator<Item = SourceInfo>,
+    ) {
+        let code = kind
+            .code()
+            .expect("a located metadata/data kind has a code");
+        self.push_located_problem(code, kind, severity, expected, actual, spans);
     }
 
     /// Order span-located problems by their position in the document. Checks
@@ -446,17 +431,19 @@ pub(crate) fn subspan(parent: &SourceInfo, start: usize, end: usize) -> Option<S
 }
 
 /// Format offending row numbers for display: `rows: 3, 7, 12`, with a trailing
-/// `, …` when there were more offenders than the recorded sample.
-fn format_rows(rows: &[usize], count: usize) -> String {
+/// `, …` when there were more offenders than the recorded sample. The label is
+/// singular (`row: 3`) for a lone offender.
+pub(crate) fn format_rows(rows: &[usize], count: usize) -> String {
+    let label = if count == 1 { "row" } else { "rows" };
     let listed = rows
         .iter()
         .map(|r| r.to_string())
         .collect::<Vec<_>>()
         .join(", ");
     if count > rows.len() {
-        format!("rows: {listed}, …")
+        format!("{label}: {listed}, …")
     } else {
-        format!("rows: {listed}")
+        format!("{label}: {listed}")
     }
 }
 
@@ -465,26 +452,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn column_problem_json_flattens_kind_with_code_and_column() {
-        let p = Problem::column(
-            Severity::Error,
-            "weight",
-            ProblemKind::TypeMismatch {
-                declared: "string".into(),
-                actual: "number".into(),
-            },
-        );
+    fn undocumented_column_json_flattens_kind_with_code_and_column() {
+        let p = Problem::undocumented_column("notes", "string");
         assert_eq!(
             serde_json::to_value(&p).unwrap(),
             serde_json::json!({
-                "code": "M01",
-                "severity": "error",
-                "message": "`weight` is declared `string` but the data is `number`",
-                "expected": "A column's data must match its declared type.",
-                "column": "weight",
-                "kind": "type_mismatch",
-                "declared": "string",
-                "actual": "number",
+                "code": "M03",
+                "severity": "warning",
+                "message": "`notes` is in the data (`string`) but not the dictionary",
+                "expected": "Every column in the data should be described in the dictionary.",
+                "column": "notes",
+                "kind": "extra_in_data",
+                "actual": "string",
             })
         );
     }
@@ -500,19 +479,12 @@ mod tests {
     }
 
     #[test]
-    fn column_problem_renders_expected_then_found() {
-        let p = Problem::column(
-            Severity::Error,
-            "weight",
-            ProblemKind::TypeMismatch {
-                declared: "string".into(),
-                actual: "number".into(),
-            },
-        );
+    fn plain_problem_renders_expected_then_found() {
+        let p = Problem::undocumented_column("notes", "string");
         assert_eq!(
             p.to_text(&SourceContext::new()),
-            "error [M01]: A column's data must match its declared type.\n  \
-             `weight` is declared `string` but the data is `number`",
+            "warning [M03]: Every column in the data should be described in the dictionary.\n  \
+             `notes` is in the data (`string`) but not the dictionary",
         );
     }
 
@@ -549,7 +521,7 @@ mod tests {
 
     #[test]
     fn row_formatting() {
-        assert_eq!(format_rows(&[2], 1), "rows: 2");
+        assert_eq!(format_rows(&[2], 1), "row: 2");
         assert_eq!(format_rows(&[2, 5, 9], 3), "rows: 2, 5, 9");
         assert_eq!(format_rows(&[1, 2, 3, 4, 5], 8), "rows: 1, 2, 3, 4, 5, …");
     }
