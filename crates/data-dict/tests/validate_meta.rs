@@ -6,34 +6,64 @@
 //! one against the other.
 
 mod common;
-use common::{temp_dir, write_parquet, write_yaml};
+use common::{assert_snapshot, temp_dir, write_dict, write_parquet};
+
+use std::path::{Path, PathBuf};
 
 use data_dict::{Problem, ProblemKind, Severity, Status, validate_meta};
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 
-#[test]
-fn matching_dict_and_parquet() {
+/// A fresh temp dir with the standard two-column parquet (`name`, `weight`)
+/// written to `data.parquet`, ready for a dictionary that sources it.
+fn dir_with_parquet() -> PathBuf {
     let dir = temp_dir();
-    let parquet = dir.join("data.parquet");
-    write_parquet(&parquet);
-    let yaml = write_yaml(
-        &dir,
-        indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
+    write_parquet(&dir.join("data.parquet"));
+    dir
+}
+
+/// The boilerplate `name` column — a `string` matching the standard parquet
+/// fixture's first column. Present in nearly every dictionary here and never
+/// itself under test.
+const NAME: &str = indoc! {"
+    - name: name
+      type: string
+      examples: [otter, seal]
+"};
+
+/// The canonical `weight` column matching the fixture's second column.
+const WEIGHT: &str = indoc! {"
+    - name: weight
+      type: number(quantity)
+      range: [0, 100]
+"};
+
+/// Build a one-`animals`-table dictionary that sources `parquet` and lists
+/// `columns` (one or more `columns:` entries, e.g. [`NAME`]/[`WEIGHT`],
+/// re-indented to fit), written beneath the standard header into `dir`.
+fn animals_dict(dir: &Path, parquet: &str, columns: &str) -> PathBuf {
+    let columns = columns
+        .trim_end()
+        .lines()
+        .map(|line| format!("      {line}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    write_dict(
+        dir,
+        &formatdoc! {"
             tables:
               animals:
                 source:
-                  parquet: data.parquet
+                  parquet: {parquet}
                 columns:
-                  - name: name
-                    type: string
-                    examples: [otter, seal]
-                  - name: weight
-                    type: number(quantity)
-                    range: [0, 100]
+            {columns}
         "},
-    );
+    )
+}
+
+#[test]
+fn matching_dict_and_parquet() {
+    let dir = dir_with_parquet();
+    let yaml = animals_dict(&dir, "data.parquet", &format!("{NAME}{WEIGHT}"));
 
     let problems = validate_meta(&yaml, None);
     assert_eq!(problems.status(), Status::Ok, "got {:?}", problems.items);
@@ -41,27 +71,19 @@ fn matching_dict_and_parquet() {
 
 #[test]
 fn type_mismatch_reported() {
-    let dir = temp_dir();
-    let parquet = dir.join("data.parquet");
-    write_parquet(&parquet);
+    let dir = dir_with_parquet();
     // `weight` is a double in the data but declared as a string here.
-    let yaml = write_yaml(
+    let yaml = animals_dict(
         &dir,
-        indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
-            tables:
-              animals:
-                source:
-                  parquet: data.parquet
-                columns:
-                  - name: name
-                    type: string
-                    examples: [otter, seal]
-                  - name: weight
-                    type: string
-                    examples: ['1', '2']
-        "},
+        "data.parquet",
+        &format!(
+            "{NAME}{}",
+            indoc! {"
+                - name: weight
+                  type: string
+                  examples: ['1', '2']
+            "}
+        ),
     );
 
     let problems = validate_meta(&yaml, None);
@@ -72,30 +94,14 @@ fn type_mismatch_reported() {
             if *code == "M01" && declared == "string" && actual == "number"
     ));
     #[cfg(unix)]
-    insta::assert_snapshot!(common::sanitize(&problems.render().join("\n"), &dir));
+    assert_snapshot!(common::diagnostic(&yaml, &problems.render().join("\n")));
 }
 
 #[test]
 fn extra_column_in_data_is_warning() {
-    let dir = temp_dir();
-    let parquet = dir.join("data.parquet");
-    write_parquet(&parquet);
+    let dir = dir_with_parquet();
     // Dictionary omits `weight`, which is present in the parquet file.
-    let yaml = write_yaml(
-        &dir,
-        indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
-            tables:
-              animals:
-                source:
-                  parquet: data.parquet
-                columns:
-                  - name: name
-                    type: string
-                    examples: [otter, seal]
-        "},
-    );
+    let yaml = animals_dict(&dir, "data.parquet", NAME);
 
     // An undocumented column is a warning, not an error: it is reported but does
     // not fail validation.
@@ -111,32 +117,15 @@ fn extra_column_in_data_is_warning() {
         [Problem { column: Some(column), code: Some(code), severity, kind: ProblemKind::ExtraInData { actual }, .. }]
             if column == "weight" && *code == "M03" && actual == "number" && *severity == Severity::Warning
     ));
-    insta::assert_snapshot!(problems.render().join("\n"));
+    assert_snapshot!(common::diagnostic(&yaml, &problems.render().join("\n")));
 }
 
 #[test]
 fn typeless_column_skips_type_check_for_present_column() {
-    let dir = temp_dir();
-    let parquet = dir.join("data.parquet");
-    write_parquet(&parquet);
+    let dir = dir_with_parquet();
     // `weight` is a double in the data but listed without a `type`, so its type
     // is not checked; and because it is listed it is not flagged as undocumented.
-    let yaml = write_yaml(
-        &dir,
-        indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
-            tables:
-              animals:
-                source:
-                  parquet: data.parquet
-                columns:
-                  - name: name
-                    type: string
-                    examples: [otter, seal]
-                  - name: weight
-        "},
-    );
+    let yaml = animals_dict(&dir, "data.parquet", &format!("{NAME}- name: weight\n"));
 
     let problems = validate_meta(&yaml, None);
     assert_eq!(problems.status(), Status::Ok, "got {:?}", problems.items);
@@ -144,29 +133,13 @@ fn typeless_column_skips_type_check_for_present_column() {
 
 #[test]
 fn typeless_column_still_must_exist_in_data() {
-    let dir = temp_dir();
-    let parquet = dir.join("data.parquet");
-    write_parquet(&parquet);
+    let dir = dir_with_parquet();
     // `height` is listed (without a `type`) but absent from the data. Listing a
     // column that doesn't exist is an error, even when it isn't described.
-    let yaml = write_yaml(
+    let yaml = animals_dict(
         &dir,
-        indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
-            tables:
-              animals:
-                source:
-                  parquet: data.parquet
-                columns:
-                  - name: name
-                    type: string
-                    examples: [otter, seal]
-                  - name: weight
-                    type: number(quantity)
-                    range: [0, 100]
-                  - name: height
-        "},
+        "data.parquet",
+        &format!("{NAME}{WEIGHT}- name: height\n"),
     );
 
     let problems = validate_meta(&yaml, None);
@@ -182,30 +155,19 @@ fn typeless_column_still_must_exist_in_data() {
 
 #[test]
 fn missing_column_in_data_reported() {
-    let dir = temp_dir();
-    let parquet = dir.join("data.parquet");
-    write_parquet(&parquet);
+    let dir = dir_with_parquet();
     // Dictionary describes `height`, which is absent from the parquet file.
-    let yaml = write_yaml(
+    let yaml = animals_dict(
         &dir,
-        indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
-            tables:
-              animals:
-                source:
-                  parquet: data.parquet
-                columns:
-                  - name: name
-                    type: string
-                    examples: [otter, seal]
-                  - name: weight
-                    type: number(quantity)
-                    range: [0, 100]
-                  - name: height
-                    type: number(quantity)
-                    range: [0, 100]
-        "},
+        "data.parquet",
+        &format!(
+            "{NAME}{WEIGHT}{}",
+            indoc! {"
+                - name: height
+                  type: number(quantity)
+                  range: [0, 100]
+            "}
+        ),
     );
 
     let problems = validate_meta(&yaml, None);
@@ -218,7 +180,7 @@ fn missing_column_in_data_reported() {
         }]
     ));
     #[cfg(unix)]
-    insta::assert_snapshot!(common::sanitize(&problems.render().join("\n"), &dir));
+    assert_snapshot!(common::diagnostic(&yaml, &problems.render().join("\n")));
 }
 
 #[test]
@@ -228,11 +190,9 @@ fn validates_every_table() {
     write_parquet(&dir.join("plants.parquet"));
     // Two tables, each with its own source. `animals` matches its data; `plants`
     // declares a `height` column its data lacks (M02). One run checks both.
-    let yaml = write_yaml(
+    let yaml = write_dict(
         &dir,
         indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
             tables:
               animals:
                 source:
@@ -276,21 +236,7 @@ fn validates_every_table() {
 fn unreadable_source_reported() {
     let dir = temp_dir();
     // The table declares a `source`, but the parquet file it names does not exist.
-    let yaml = write_yaml(
-        &dir,
-        indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
-            tables:
-              animals:
-                source:
-                  parquet: missing.parquet
-                columns:
-                  - name: name
-                    type: string
-                    examples: [otter, seal]
-        "},
-    );
+    let yaml = animals_dict(&dir, "missing.parquet", NAME);
 
     let problems = validate_meta(&yaml, None);
     assert_eq!(problems.status(), Status::Error);
@@ -308,7 +254,7 @@ fn unreadable_source_reported() {
         problems.items
     );
     #[cfg(unix)]
-    insta::assert_snapshot!(common::sanitize(&problems.render().join("\n"), &dir));
+    assert_snapshot!(common::diagnostic(&yaml, &problems.render().join("\n")));
 }
 
 #[test]
@@ -318,11 +264,9 @@ fn unreadable_source_does_not_stop_other_tables() {
     // missing source (M05) is reported, but `plants` is still checked, where its
     // declared `weight` type disagrees with the data (M01).
     write_parquet(&dir.join("plants.parquet"));
-    let yaml = write_yaml(
+    let yaml = write_dict(
         &dir,
         indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
             tables:
               animals:
                 source:
@@ -357,32 +301,13 @@ fn unreadable_source_does_not_stop_other_tables() {
         problems.items
     );
     #[cfg(unix)]
-    insta::assert_snapshot!(common::sanitize(&problems.render().join("\n"), &dir));
+    assert_snapshot!(common::diagnostic(&yaml, &problems.render().join("\n")));
 }
 
 #[test]
 fn unknown_table_name() {
-    let dir = temp_dir();
-    let parquet = dir.join("data.parquet");
-    write_parquet(&parquet);
-    let yaml = write_yaml(
-        &dir,
-        indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
-            tables:
-              animals:
-                source:
-                  parquet: data.parquet
-                columns:
-                  - name: name
-                    type: string
-                    examples: [otter, seal]
-                  - name: weight
-                    type: number(quantity)
-                    range: [0, 100]
-        "},
-    );
+    let dir = dir_with_parquet();
+    let yaml = animals_dict(&dir, "data.parquet", &format!("{NAME}{WEIGHT}"));
 
     let problems = validate_meta(&yaml, Some("nope"));
     assert!(
@@ -402,11 +327,9 @@ fn unknown_table_name() {
 fn missing_source_reported() {
     let dir = temp_dir();
     // The table declares no `source`; valid at the spec level, but M04 at meta.
-    let yaml = write_yaml(
+    let yaml = write_dict(
         &dir,
         indoc! {"
-            $version: 0.1.0
-            $learn_more: http://data-dict.tidyverse.org/
             tables:
               animals:
                 columns:
