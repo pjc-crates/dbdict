@@ -22,5 +22,5 @@ Error: [D01] A required column must not contain nulls.
     │ 
  10 │         constraints: [required]
     │                       ────┬───  
-    │                           ╰───── has 1 null value (row: 2)
+    │                           ╰───── has 1 null value
 ────╯

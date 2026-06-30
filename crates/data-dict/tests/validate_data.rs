@@ -15,7 +15,7 @@ use std::sync::Arc;
 use data_dict::{Problem, ProblemKind, ProblemSet, Status, validate_data, validate_meta};
 use indoc::{formatdoc, indoc};
 use parquet::data_type::DoubleType;
-use parquet::file::properties::WriterProperties;
+use parquet::file::properties::{EnabledStatistics, WriterProperties};
 use parquet::file::writer::{SerializedColumnWriter, SerializedFileWriter};
 use parquet::schema::parser::parse_message_type;
 
@@ -39,12 +39,26 @@ fn build_column(
     write: impl FnOnce(&mut SerializedColumnWriter),
     column: &str,
 ) -> PathBuf {
+    build_column_with_properties(
+        schema_col,
+        write,
+        column,
+        WriterProperties::builder().build(),
+    )
+}
+
+fn build_column_with_properties(
+    schema_col: &str,
+    write: impl FnOnce(&mut SerializedColumnWriter),
+    column: &str,
+    properties: WriterProperties,
+) -> PathBuf {
     let dir = temp_dir();
     let parquet = dir.join("data.parquet");
 
     let message = format!("message schema {{ {schema_col}; }}");
     let schema = Arc::new(parse_message_type(&message).unwrap());
-    let props = Arc::new(WriterProperties::builder().build());
+    let props = Arc::new(properties);
     let file = File::create(&parquet).unwrap();
     let mut writer = SerializedFileWriter::new(file, schema, props).unwrap();
     let mut rg = writer.next_row_group().unwrap();
@@ -139,13 +153,37 @@ fn nulls_in_required_column_reported() {
         matches!(
             result.items.as_slice(),
             [Problem { kind: ProblemKind::NullsInRequired { count, rows }, .. }]
-                if *count == 1 && rows == &[2]
+                if *count == 1 && rows.is_empty()
         ),
         "got {:?}",
         result.items
     );
     #[cfg(unix)]
     assert_snapshot!(common::diagnostic(&yaml, &result.render().join("\n")));
+}
+
+#[test]
+fn missing_null_statistics_falls_back_to_data_scan() {
+    let yaml = build_column_with_properties(
+        "OPTIONAL DOUBLE weight",
+        write_double_with_null,
+        indoc! {"
+            - name: weight
+              type: number(quantity)
+              constraints: [required]
+              range: [0, 100]
+        "},
+        WriterProperties::builder()
+            .set_statistics_enabled(EnabledStatistics::None)
+            .build(),
+    );
+
+    let result = validate_data(&yaml, None);
+    assert!(matches!(
+        result.items.as_slice(),
+        [Problem { kind: ProblemKind::NullsInRequired { count: 1, rows }, .. }]
+            if rows == &[2]
+    ));
 }
 
 #[test]

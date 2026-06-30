@@ -7,8 +7,17 @@
 
 use std::path::Path;
 
-use crate::model::Table;
+use data_dict_parquet::ColumnMeta;
+
+use crate::model::{Column, Constraint, Table};
 use crate::problem::{Problem, ProblemKind, ProblemSet, Severity};
+
+/// The result of attempting a data-level check from metadata alone.
+pub(crate) enum CheckResult {
+    Pass,
+    Inconclusive,
+    Fail(Box<Problem>),
+}
 
 /// Validate every table's column names and types against a data dictionary.
 ///
@@ -30,6 +39,53 @@ pub(crate) fn meta_issues(table: &Table, actual: &[(String, String)], out: &mut 
     validate_m01_column_types(table, actual, out);
     validate_m02_missing_columns(table, actual, out);
     validate_m03_extra_columns(table, actual, out);
+}
+
+/// Attempt D01 from Parquet footer metadata. Although this reads only metadata,
+/// the rule remains a D## check because it validates the column's values.
+pub(crate) fn validate_d01_required_not_null(
+    table: &Table,
+    col: &Column,
+    meta: &ColumnMeta,
+) -> CheckResult {
+    if !col.is_required_implied() {
+        return CheckResult::Pass;
+    }
+    match meta.null_count {
+        Some(0) => CheckResult::Pass,
+        Some(count) => CheckResult::Fail(Box::new(nulls_in_required_meta(table, col, count))),
+        None => CheckResult::Inconclusive,
+    }
+}
+
+fn nulls_in_required_meta(table: &Table, col: &Column, count: usize) -> Problem {
+    let plural = if count == 1 { "" } else { "s" };
+    let constraint_span = col
+        .constraints
+        .iter()
+        .find(|constraint| {
+            matches!(
+                constraint.value,
+                Constraint::Required | Constraint::PrimaryKey
+            )
+        })
+        .map_or_else(
+            || col.name.span.clone(),
+            |constraint| constraint.span.clone(),
+        );
+    Problem {
+        code: Some("D01"),
+        severity: Severity::Error,
+        message: format!("has {count} null value{plural}"),
+        column: None,
+        expected: Some("A required column must not contain nulls.".into()),
+        span: Some(constraint_span),
+        context: vec![table.name.span.clone(), col.name.span.clone()],
+        kind: ProblemKind::NullsInRequired {
+            count,
+            rows: Vec::new(),
+        },
+    }
 }
 
 fn validate_m01_column_types(table: &Table, actual: &[(String, String)], out: &mut ProblemSet) {
