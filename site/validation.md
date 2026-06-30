@@ -45,6 +45,7 @@ When validating the spec, each problem with the dictionary is one of:
 * **Descending range** (S13, error): a `range`'s minimum is greater than its maximum.
 * **Time zone without datetime** (S14, error): a column has `time_zone` but its type is not `datetime`.
 * **Malformed time zone** (S15, error): a `time_zone` is not `naive`, `UTC`, or an IANA `Area/Location` name with a known area. The shape is checked, not the full tz database, so the accepted set doesn't go stale as zones are added or renamed.
+* **Misplaced single-table description** (S16, warning): a dictionary with exactly one table carries `description` or `details` on that table; for a single-table dictionary these belong at the top level.
 
 (An `enum`'s `values` are constrained structurally by the schema rather than by an `S` check: each value must be a scalar, and in the map form each label must be a string.)
 

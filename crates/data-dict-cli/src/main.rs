@@ -33,7 +33,7 @@ enum Command {
     },
 }
 
-/// Shared arguments for `validate-meta` and `validate-data`. 
+/// Shared arguments for `validate-meta` and `validate-data`.
 #[derive(clap::Args)]
 struct ValidateArgs {
     dict: PathBuf,
