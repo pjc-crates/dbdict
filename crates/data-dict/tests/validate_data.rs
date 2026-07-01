@@ -363,6 +363,54 @@ fn numeric_enum_values_are_checked() {
     );
 }
 
+/// With dictionary encoding disabled, the D03 dictionary fast-path can't prove
+/// conformance and must fall back to the value scan — which still finds the
+/// violation and its exact row.
+#[test]
+fn enum_without_dictionary_encoding_falls_back_to_scan() {
+    let no_dict = || {
+        WriterProperties::builder()
+            .set_dictionary_enabled(false)
+            .build()
+    };
+
+    let clean = build_column_with_properties(
+        "REQUIRED BYTE_ARRAY status (UTF8)",
+        write_strings(&["active", "banned", "active"]),
+        indoc! {"
+            - name: status
+              type: enum
+              values: [active, banned]
+        "},
+        no_dict(),
+    );
+    assert_eq!(validate_data(&clean, None).status(), Status::Ok);
+
+    let bad = build_column_with_properties(
+        "REQUIRED BYTE_ARRAY status (UTF8)",
+        write_strings(&["active", "banned", "sleepy"]),
+        indoc! {"
+            - name: status
+              type: enum
+              values: [active, banned]
+        "},
+        no_dict(),
+    );
+    let result = validate_data(&bad, None);
+    assert!(
+        matches!(
+            result.items.as_slice(),
+            [Problem {
+                code: Some("D03"),
+                kind: ProblemKind::ValuesOutsideEnum { count: 1, rows, values },
+                ..
+            }] if rows == &[3] && values == &["sleepy"]
+        ),
+        "got {:?}",
+        result.items
+    );
+}
+
 #[test]
 fn primary_key_implies_required_for_nulls() {
     // `primary_key` implies `required`, so the null is reported even without an

@@ -74,9 +74,27 @@ pub fn column_stats(
         .iter()
         .map(|(name, _, _)| (name.clone(), ColumnStats::default()))
         .collect();
+
+    // Fast path: settle the enum-membership need (D03) from dictionary pages
+    // where the data conforms, sparing those columns the value scan. A column
+    // still scanned for its nulls skips the redundant dictionary read.
+    let proven: HashSet<&str> = requested
+        .iter()
+        .filter(|(_, _, need)| need.allowed.is_some() && !need.nulls)
+        .filter_map(|(name, index, need)| {
+            let allowed = need.allowed.as_ref()?;
+            crate::dictionary::dictionary_conforms(&reader, *index, allowed)
+                .ok()
+                .filter(|&conforms| conforms)
+                .map(|_| name.as_str())
+        })
+        .collect();
+
     let to_scan: Vec<usize> = requested
         .iter()
-        .filter(|(_, _, need)| need.any())
+        .filter(|(name, _, need)| {
+            need.nulls || (need.allowed.is_some() && !proven.contains(name.as_str()))
+        })
         .map(|(_, index, _)| *index)
         .collect();
 
@@ -109,6 +127,7 @@ pub fn column_stats(
                 continue;
             }
             if let Some(allowed) = &need.allowed
+                && !proven.contains(name.as_str())
                 && let Some(key) = field_key(field)
                 && !allowed.contains(&key)
             {
