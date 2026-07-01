@@ -48,8 +48,14 @@ impl Status {
 
 /// One problem found while validating, at any level. `code` and `column` are
 /// present only when meaningful (spec problems have a code but no column;
-/// pre-flight failures have neither); `span`/`context` drive source-highlighted
-/// rendering and are never serialized; `kind` is the structured payload.
+/// pre-flight failures have neither); `context` drives source-highlighted
+/// rendering; `kind` is the structured payload.
+///
+/// The derive skips the raw `context` spans (they hold internal byte offsets, of
+/// no use to a JSON consumer). Instead the primary span's resolved line/column
+/// [`SpanLocation`] is serialized under a `location` key by a custom step at the
+/// CLI boundary, where the [`SourceContext`] needed to resolve it is available
+/// (see `problems_to_json`).
 #[derive(Debug, serde::Serialize)]
 pub struct Problem {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,16 +69,28 @@ pub struct Problem {
     /// what was found instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected: Option<String>,
-    /// The YAML span this problem points at (spec problems only). Display-only.
-    #[serde(skip)]
-    pub span: Option<SourceInfo>,
-    /// Enclosing source lines shown faded (unlabelled) around the primary
-    /// label, locating it within the document (e.g. the table and column a bad
-    /// value sits in). Display-only; ordered outermost-first.
+    /// The YAML spans this problem points at, ordered outermost-first: the
+    /// **last** span is the primary label (carrying `message`) and any preceding
+    /// spans are enclosing source lines shown faded to locate it (e.g. the table
+    /// and column a bad value sits in). Empty for problems with no location
+    /// (column-located and pre-flight failures). Display-only; see the type-level
+    /// note on how the primary span reaches the JSON output.
     #[serde(skip)]
     pub context: Vec<SourceInfo>,
     #[serde(flatten)]
     pub kind: ProblemKind,
+}
+
+impl Problem {
+    /// The primary (labelled) span, or `None` for unlocated problems.
+    fn primary_span(&self) -> Option<&SourceInfo> {
+        self.context.last()
+    }
+
+    /// The faded context spans surrounding the primary label, outermost-first.
+    fn faded_spans(&self) -> &[SourceInfo] {
+        self.context.split_last().map_or(&[], |(_, rest)| rest)
+    }
 }
 
 /// A resolved source span as 0-based line/column bounds, for JSON consumers.
@@ -168,8 +186,7 @@ impl Problem {
             message: message.into(),
             column: None,
             expected: None,
-            span: Some(span),
-            context: Vec::new(),
+            context: vec![span],
             kind: ProblemKind::Spec,
         }
     }
@@ -187,7 +204,6 @@ impl Problem {
             expected: Some(
                 "Every column in the data should be described in the dictionary.".into(),
             ),
-            span: None,
             context: Vec::new(),
             kind: ProblemKind::ExtraInData { actual },
         }
@@ -201,7 +217,6 @@ impl Problem {
             message: message.into(),
             column: None,
             expected: None,
-            span: None,
             context: Vec::new(),
             kind,
         }
@@ -211,7 +226,7 @@ impl Problem {
     /// for JSON consumers, e.g. an editor placing the diagnostic in the file.
     /// `None` for problems with no span (column-located and pre-flight failures).
     pub fn location(&self, ctx: &SourceContext) -> Option<SpanLocation> {
-        let span = self.span.as_ref()?;
+        let span = self.primary_span()?;
         let start = span.map_offset(0, ctx)?.location;
         let end = span.map_offset(span.length(), ctx)?.location;
         Some(SpanLocation {
@@ -227,7 +242,7 @@ impl Problem {
     /// just the message when there is no code). When `expected` is set it leads
     /// the output and `message` follows on its own line as the "found" detail.
     pub fn to_text(&self, ctx: &SourceContext) -> String {
-        match &self.span {
+        match self.primary_span() {
             Some(span) => self.render_with_source(span, ctx),
             None => self.render_plain(),
         }
@@ -244,10 +259,11 @@ impl Problem {
             Severity::Error => DiagnosticMessageBuilder::error(header),
             Severity::Warning => DiagnosticMessageBuilder::warning(header),
         };
-        for ctx_span in &self.context {
+        let faded = self.faded_spans();
+        for ctx_span in faded {
             builder = builder.add_faded_at("", ctx_span.clone());
         }
-        for gap_span in gap_fill_spans(&self.context, span, ctx) {
+        for gap_span in gap_fill_spans(faded, span, ctx) {
             builder = builder.add_faded_at("", gap_span);
         }
         builder = builder
@@ -369,17 +385,17 @@ impl ProblemSet {
         actual: impl Into<String>,
         spans: impl IntoIterator<Item = SourceInfo>,
     ) {
-        let mut spans: Vec<SourceInfo> = spans.into_iter().collect();
-        let primary = spans
-            .pop()
-            .expect("a located problem needs at least the primary span");
+        let spans: Vec<SourceInfo> = spans.into_iter().collect();
+        assert!(
+            !spans.is_empty(),
+            "a located problem needs at least the primary span"
+        );
         self.push(Problem {
             code: Some(code),
             severity,
             message: actual.into(),
             column: None,
             expected: Some(expected.into()),
-            span: Some(primary),
             context: spans,
             kind,
         });
@@ -448,8 +464,7 @@ impl ProblemSet {
     /// last.
     pub fn sort(&mut self) {
         self.items.sort_by_key(|p| {
-            p.span
-                .as_ref()
+            p.primary_span()
                 .and_then(|s| s.resolve_byte_range())
                 .map(|(file, start, _)| (file, start))
                 .unwrap_or((usize::MAX, usize::MAX))
