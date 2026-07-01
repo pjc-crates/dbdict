@@ -59,7 +59,9 @@ pub struct Column {
     pub name: Spanned<String>,
     pub constraints: Vec<Spanned<Constraint>>,
     pub col_type: Option<Spanned<String>>,
-    pub values: Option<SourceInfo>,
+    /// The allowed values of an `enum` column: the list items, or the keys of
+    /// the map form (whose labels are dropped — only the values are constrained).
+    pub values: Option<Representation>,
     pub range: Option<Representation>,
     pub examples: Option<Representation>,
     pub units: Option<Spanned<String>>,
@@ -93,6 +95,18 @@ impl Scalar {
             Scalar::Compound => "a list or map",
         }
     }
+
+    /// A canonical string form for value-equality comparison against data (D03).
+    /// `None` for kinds that can't appear as a data value (`null`, compound).
+    /// Must agree with the data side's canonicalization in `data-dict-parquet`.
+    pub fn value_key(&self) -> Option<String> {
+        match self {
+            Scalar::Number(n) => Some(n.to_string()),
+            Scalar::String(s) => Some(s.clone()),
+            Scalar::Bool(b) => Some(b.to_string()),
+            Scalar::Null | Scalar::Compound => None,
+        }
+    }
 }
 
 impl Column {
@@ -110,6 +124,10 @@ impl Column {
     /// `primary_key` (which the spec defines as implying `required`).
     pub fn is_required_implied(&self) -> bool {
         self.has(Constraint::Required) || self.has(Constraint::PrimaryKey)
+    }
+
+    pub fn is_enum(&self) -> bool {
+        self.col_type.as_ref().is_some_and(|t| t.value == "enum")
     }
 }
 

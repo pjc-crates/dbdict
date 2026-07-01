@@ -485,7 +485,7 @@ fn validate_s07_representation(table: &Table, col: &Column, out: &mut ProblemSet
                 "S07",
                 format!("A `{type_name}` column must use `range`, not `values`."),
                 found("values"),
-                at(values),
+                at(&values.span),
             );
         }
         if let Some(examples) = &col.examples {
@@ -498,7 +498,7 @@ fn validate_s07_representation(table: &Table, col: &Column, out: &mut ProblemSet
         }
     } else if type_name == "boolean" {
         for (span, key) in [
-            (col.values.as_ref(), "values"),
+            (col.values.as_ref().map(|v| &v.span), "values"),
             (col.range.as_ref().map(|r| &r.span), "range"),
             (col.examples.as_ref().map(|e| &e.span), "examples"),
         ] {
@@ -525,7 +525,7 @@ fn validate_s07_representation(table: &Table, col: &Column, out: &mut ProblemSet
                 "S07",
                 format!("A `{type_name}` column must not use `values`."),
                 found("values"),
-                at(values),
+                at(&values.span),
             );
         }
         if let Some(range) = &col.range {

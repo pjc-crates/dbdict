@@ -58,6 +58,18 @@ pub(crate) fn validate_d01_required_not_null(
     }
 }
 
+/// Attempt D03 from footer metadata. Set membership can't be settled from the
+/// footer — min/max bound the extremes but say nothing about the values between
+/// them — so an `enum` column carrying a `values` set is always inconclusive and
+/// deferred to the scan; any other column passes here.
+pub(crate) fn validate_d03_enum_membership(col: &Column) -> CheckResult {
+    if col.is_enum() && col.values.is_some() {
+        CheckResult::Inconclusive
+    } else {
+        CheckResult::Pass
+    }
+}
+
 fn nulls_in_required_meta(table: &Table, col: &Column, count: usize) -> Problem {
     let plural = if count == 1 { "" } else { "s" };
     let constraint_span = col

@@ -138,6 +138,14 @@ pub enum ProblemKind {
     /// `D01` — a `required` (or `primary_key`) column contains nulls. `rows`
     /// lists the first few offending row numbers (1-based); `count` is the total.
     NullsInRequired { count: usize, rows: Vec<usize> },
+    /// `D03` — an `enum` column contains values outside its declared `values`.
+    /// `count` is the total; `rows` lists the first few offending row numbers
+    /// (1-based) and `values` the first few distinct offending values.
+    ValuesOutsideEnum {
+        count: usize,
+        rows: Vec<usize>,
+        values: Vec<String>,
+    },
 }
 
 impl ProblemKind {
@@ -152,6 +160,7 @@ impl ProblemKind {
             ProblemKind::MissingSource => "M04",
             ProblemKind::UnreadableSource => "M05",
             ProblemKind::NullsInRequired { .. } => "D01",
+            ProblemKind::ValuesOutsideEnum { .. } => "D03",
             _ => return None,
         })
     }
@@ -166,7 +175,9 @@ impl ProblemKind {
             | ProblemKind::ExtraInData { .. }
             | ProblemKind::MissingSource
             | ProblemKind::UnreadableSource => Level::Meta,
-            ProblemKind::NullsInRequired { .. } => Level::Data,
+            ProblemKind::NullsInRequired { .. } | ProblemKind::ValuesOutsideEnum { .. } => {
+                Level::Data
+            }
             _ => return None,
         })
     }
@@ -584,6 +595,15 @@ mod tests {
             }
             .level(),
             Some(Level::Data)
+        );
+        assert_eq!(
+            ProblemKind::ValuesOutsideEnum {
+                count: 1,
+                rows: vec![2],
+                values: vec!["x".into()],
+            }
+            .code(),
+            Some("D03")
         );
         assert_eq!(ProblemKind::Io.code(), None);
         assert_eq!(ProblemKind::Io.level(), None);

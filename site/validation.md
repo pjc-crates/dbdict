@@ -65,3 +65,4 @@ When validating the data's metadata against the dictionary, each column mismatch
 When validating the data's values against the dictionary, each column mismatch is one of:
 
 * **Nulls in a required column** (D01, error): a `required` or `primary_key` column contains nulls.
+* **Value outside enum** (D03, error): an `enum` column contains a (non-null) value that is not one of its declared `values`.

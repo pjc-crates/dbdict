@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use data_dict::{Problem, ProblemKind, ProblemSet, Status, validate_data, validate_meta};
 use indoc::{formatdoc, indoc};
-use parquet::data_type::DoubleType;
+use parquet::data_type::{ByteArray, ByteArrayType, DoubleType, Int32Type};
 use parquet::file::properties::{EnabledStatistics, WriterProperties};
 use parquet::file::writer::{SerializedColumnWriter, SerializedFileWriter};
 use parquet::schema::parser::parse_message_type;
@@ -222,6 +222,145 @@ fn nulls_in_optional_column_ok() {
     );
 
     assert_eq!(result.status(), Status::Ok);
+}
+
+/// Write the given strings as a required UTF-8 byte-array column.
+fn write_strings<'a>(values: &'a [&'a str]) -> impl FnOnce(&mut SerializedColumnWriter) + 'a {
+    move |col| {
+        let bytes = values
+            .iter()
+            .map(|s| ByteArray::from(*s))
+            .collect::<Vec<_>>();
+        col.typed::<ByteArrayType>()
+            .write_batch(&bytes, None, None)
+            .unwrap();
+    }
+}
+
+#[test]
+fn values_outside_enum_reported() {
+    let yaml = build_column(
+        "REQUIRED BYTE_ARRAY status (UTF8)",
+        write_strings(&["active", "banned", "active", "sleepy"]),
+        indoc! {"
+            - name: status
+              type: enum
+              values: [active, banned]
+        "},
+    );
+    let result = validate_data(&yaml, None);
+
+    assert_eq!(result.status(), Status::Error);
+    assert!(
+        matches!(
+            result.items.as_slice(),
+            [Problem {
+                code: Some("D03"),
+                kind: ProblemKind::ValuesOutsideEnum { count: 1, rows, values },
+                ..
+            }] if rows == &[4] && values == &["sleepy"]
+        ),
+        "got {:?}",
+        result.items
+    );
+    #[cfg(unix)]
+    assert_snapshot!(common::diagnostic(&yaml, &result.render().join("\n")));
+}
+
+#[test]
+fn enum_values_within_set_ok() {
+    let result = check_column(
+        "REQUIRED BYTE_ARRAY status (UTF8)",
+        write_strings(&["active", "banned", "active"]),
+        indoc! {"
+            - name: status
+              type: enum
+              values: [active, banned]
+        "},
+    );
+
+    assert_eq!(result.status(), Status::Ok, "got {:?}", result.items);
+}
+
+#[test]
+fn enum_map_form_values_are_the_keys() {
+    // The map form's keys are the allowed values; the labels are ignored.
+    let result = check_column(
+        "REQUIRED BYTE_ARRAY status (UTF8)",
+        write_strings(&["A", "Active"]),
+        indoc! {"
+            - name: status
+              type: enum
+              values:
+                A: Active
+                B: Banned
+        "},
+    );
+
+    assert_eq!(result.status(), Status::Error);
+    assert!(
+        matches!(
+            result.items.as_slice(),
+            [Problem {
+                kind: ProblemKind::ValuesOutsideEnum { count: 1, rows, values },
+                ..
+            }] if rows == &[2] && values == &["Active"]
+        ),
+        "got {:?}",
+        result.items
+    );
+}
+
+#[test]
+fn nulls_in_optional_enum_are_not_outside_values() {
+    // A null is the concern of D01 (and only when required); it is never an
+    // "outside the set" value.
+    let result = check_column(
+        "OPTIONAL BYTE_ARRAY status (UTF8)",
+        |col| {
+            let bytes = [ByteArray::from("active"), ByteArray::from("banned")];
+            col.typed::<ByteArrayType>()
+                .write_batch(&bytes, Some(&[1, 0, 1]), None)
+                .unwrap();
+        },
+        indoc! {"
+            - name: status
+              type: enum
+              values: [active, banned]
+        "},
+    );
+
+    assert_eq!(result.status(), Status::Ok, "got {:?}", result.items);
+}
+
+#[test]
+fn numeric_enum_values_are_checked() {
+    let result = check_column(
+        "REQUIRED INT32 grade",
+        |col| {
+            col.typed::<Int32Type>()
+                .write_batch(&[1, 2, 3], None, None)
+                .unwrap();
+        },
+        indoc! {"
+            - name: grade
+              type: enum
+              values: [1, 2]
+        "},
+    );
+
+    assert_eq!(result.status(), Status::Error);
+    assert!(
+        matches!(
+            result.items.as_slice(),
+            [Problem {
+                kind: ProblemKind::ValuesOutsideEnum { count: 1, rows, values },
+                ..
+            }] if rows == &[3] && values == &["3"]
+        ),
+        "got {:?}",
+        result.items
+    );
 }
 
 #[test]

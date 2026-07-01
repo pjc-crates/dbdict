@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::path::Path;
 
@@ -13,16 +13,21 @@ use crate::ParquetError;
 pub struct ColumnNeeds {
     /// Count nulls and sample the row numbers where they occur.
     pub nulls: bool,
+    /// The set of allowed values (D03). When present, non-null values not in
+    /// the set are counted and sampled. Values are the canonical string form
+    /// produced by [`field_key`]; the caller must canonicalize its set to match.
+    pub allowed: Option<HashSet<String>>,
 }
 
 impl ColumnNeeds {
     pub fn any(&self) -> bool {
-        self.nulls
+        self.nulls || self.allowed.is_some()
     }
 
     pub fn merge(self, other: Self) -> Self {
         ColumnNeeds {
             nulls: self.nulls || other.nulls,
+            allowed: self.allowed.or(other.allowed),
         }
     }
 }
@@ -33,6 +38,13 @@ pub struct ColumnStats {
     pub null_count: usize,
     /// 1-based row numbers, capped by the caller's limit.
     pub null_rows: Vec<usize>,
+    /// Non-null values found outside the [`ColumnNeeds::allowed`] set.
+    pub outside_count: usize,
+    /// 1-based row numbers of outside values, capped by the caller's limit.
+    pub outside_rows: Vec<usize>,
+    /// Distinct offending values, capped by the caller's limit, in first-seen
+    /// order.
+    pub outside_values: Vec<String>,
 }
 
 /// Gather requested statistics in one projected, streaming pass over the file.
@@ -64,7 +76,7 @@ pub fn column_stats(
         .collect();
     let to_scan: Vec<usize> = requested
         .iter()
-        .filter(|(_, _, need)| need.nulls)
+        .filter(|(_, _, need)| need.any())
         .map(|(_, index, _)| *index)
         .collect();
 
@@ -87,14 +99,51 @@ pub fn column_stats(
             let (Some(stat), Some(need)) = (stats.get_mut(name), needs.get(name)) else {
                 continue;
             };
-            if need.nulls && matches!(field, Field::Null) {
-                stat.null_count += 1;
-                if stat.null_rows.len() < limit {
-                    stat.null_rows.push(index + 1);
+            if matches!(field, Field::Null) {
+                if need.nulls {
+                    stat.null_count += 1;
+                    if stat.null_rows.len() < limit {
+                        stat.null_rows.push(index + 1);
+                    }
+                }
+                continue;
+            }
+            if let Some(allowed) = &need.allowed
+                && let Some(key) = field_key(field)
+                && !allowed.contains(&key)
+            {
+                stat.outside_count += 1;
+                if stat.outside_rows.len() < limit {
+                    stat.outside_rows.push(index + 1);
+                }
+                if stat.outside_values.len() < limit && !stat.outside_values.contains(&key) {
+                    stat.outside_values.push(key);
                 }
             }
         }
     }
 
     Ok(stats)
+}
+
+/// The canonical string form of a scalar field value, for set membership (D03).
+/// `None` for kinds that can't be an `enum` value (a matching `enum` column
+/// would already be an `M01` type mismatch). Integer and float forms follow
+/// Rust's `Display`, matching `Scalar::value_key` on the dictionary side.
+fn field_key(field: &Field) -> Option<String> {
+    Some(match field {
+        Field::Bool(v) => v.to_string(),
+        Field::Byte(v) => v.to_string(),
+        Field::Short(v) => v.to_string(),
+        Field::Int(v) => v.to_string(),
+        Field::Long(v) => v.to_string(),
+        Field::UByte(v) => v.to_string(),
+        Field::UShort(v) => v.to_string(),
+        Field::UInt(v) => v.to_string(),
+        Field::ULong(v) => v.to_string(),
+        Field::Float(v) => v.to_string(),
+        Field::Double(v) => v.to_string(),
+        Field::Str(v) => v.clone(),
+        _ => return None,
+    })
 }

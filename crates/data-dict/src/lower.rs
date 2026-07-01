@@ -87,7 +87,7 @@ fn lower_column(node: &YamlWithSourceInfo) -> Option<Column> {
     let mut name: Option<Spanned<String>> = None;
     let mut constraints: Vec<Spanned<Constraint>> = Vec::new();
     let mut col_type: Option<Spanned<String>> = None;
-    let mut values: Option<SourceInfo> = None;
+    let mut values: Option<Representation> = None;
     let mut range: Option<Representation> = None;
     let mut examples: Option<Representation> = None;
     let mut units: Option<Spanned<String>> = None;
@@ -108,7 +108,12 @@ fn lower_column(node: &YamlWithSourceInfo) -> Option<Column> {
                     col_type = Some(Spanned::new(s.to_string(), entry.value_span.clone()));
                 }
             }
-            "values" => values = Some(entry.value_span.clone()),
+            "values" => {
+                values = Some(Representation {
+                    span: entry.value_span.clone(),
+                    items: lower_enum_values(&entry.value),
+                });
+            }
             "range" => {
                 range = Some(Representation {
                     span: entry.value_span.clone(),
@@ -155,6 +160,20 @@ fn lower_column(node: &YamlWithSourceInfo) -> Option<Column> {
         units,
         time_zone,
     })
+}
+
+/// Lower an enum's `values` node into its allowed scalars with spans.
+fn lower_enum_values(node: &YamlWithSourceInfo) -> Vec<Spanned<Scalar>> {
+    if let Some(entries) = node.as_hash() {
+        // Map form: the keys are the values, the labels are dropped.
+        entries
+            .iter()
+            .map(|entry| Spanned::new(lower_scalar(&entry.key), entry.key.source_info.clone()))
+            .collect()
+    } else {
+        // List form (or a lone scalar, which the schema rejects upstream).
+        lower_scalars(node)
+    }
 }
 
 /// Lower a `range` or `examples` node into its scalar elements with spans.
