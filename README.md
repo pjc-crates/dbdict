@@ -1,5 +1,11 @@
 # `data-dict.yaml`
 
+> **This repository is `dbdict`** — a fork of
+> [tidyverse/data-dict](https://github.com/tidyverse/data-dict) (MIT), diverged
+> toward rich, DuckDB-native column types with a `typedef:` alias layer. The
+> documentation below still describes the upstream `data-dict` tool and is being
+> reworked; see [`CLAUDE.md`](CLAUDE.md) for the current direction.
+
 `data-dict.yaml` is a lightweight, YAML-based data dictionary specification. It
 describes a collection of related tables — their columns, types, constraints,
 relationships, and the domain vocabulary you need to understand them — in a
