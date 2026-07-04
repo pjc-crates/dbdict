@@ -345,6 +345,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-dict-duckdb"
+version = "0.0.1"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "data-dict-parquet"
 version = "0.0.1"
 dependencies = [

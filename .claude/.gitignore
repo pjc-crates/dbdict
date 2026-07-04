@@ -1,0 +1,5 @@
+# override parent ignores — everything here is tracked
+!*
+
+# except machine-local settings
+settings.local.json

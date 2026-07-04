@@ -1,0 +1,10 @@
+[package]
+name = "data-dict-duckdb"
+description = "DuckDB (CLI shell-out) reader for data-dict.yaml validation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json.workspace = true
