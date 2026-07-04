@@ -1,0 +1,11 @@
+[package]
+name = "dbdict-duckdb"
+description = "DuckDB (CLI shell-out) reader for dbdict.yaml validation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+duckdb.workspace = true

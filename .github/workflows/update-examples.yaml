@@ -20,7 +20,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build validator
-        run: cargo build -p data-dict-cli --release
+        run: cargo build -p dbdict-cli --release
 
       - name: Download examples
         run: Rscript download-examples.R
@@ -30,7 +30,7 @@ jobs:
           status=0
           for f in site/examples/*.yaml; do
             echo "::group::Validating $f"
-            if ! ./target/release/data-dict validate-spec "$f"; then
+            if ! ./target/release/dbdict validate-spec "$f"; then
               status=1
             fi
             echo "::endgroup::"

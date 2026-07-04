@@ -1,0 +1,16 @@
+[package]
+name = "dbdict-parquet"
+description = "Parquet reader for dbdict.yaml validation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+parquet = { workspace = true, features = [
+  "snap",
+  "flate2",
+  "lz4",
+  "zstd",
+  "brotli"
+] }

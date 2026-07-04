@@ -1,0 +1,20 @@
+[package]
+name = "dbdict-cli"
+description = "Command-line tool for dbdict.yaml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "dbdict"
+path = "src/main.rs"
+
+[dependencies]
+dbdict.workspace = true
+dbdict-parquet.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta = "1"
