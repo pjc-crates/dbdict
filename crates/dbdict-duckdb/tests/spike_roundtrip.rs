@@ -63,9 +63,15 @@ fn alias_typed_describe_byte_matches_native_typed_describe() {
 
     // print for the spike record
     for ((n, dt), (_, rt)) in dict.iter().zip(real.iter()) {
-        println!("{n}: dict={dt:?} real={rt:?} {}", if dt == rt { "OK" } else { "MISMATCH" });
+        println!(
+            "{n}: dict={dt:?} real={rt:?} {}",
+            if dt == rt { "OK" } else { "MISMATCH" }
+        );
     }
-    assert_eq!(dict, real, "alias-typed DESCRIBE must byte-match native-typed DESCRIBE");
+    assert_eq!(
+        dict, real,
+        "alias-typed DESCRIBE must byte-match native-typed DESCRIBE"
+    );
 }
 
 #[test]
@@ -73,5 +79,8 @@ fn unknown_or_forward_typedef_errors() {
     let conn = Connection::open_in_memory().expect("in-memory db");
     // `b` does not exist yet -> should error, not silently succeed
     let r = conn.execute_batch("CREATE TYPE a AS b;");
-    assert!(r.is_err(), "referencing an undefined type should error, got {r:?}");
+    assert!(
+        r.is_err(),
+        "referencing an undefined type should error, got {r:?}"
+    );
 }

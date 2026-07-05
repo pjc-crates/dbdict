@@ -62,13 +62,14 @@ pub fn dict_type_for(column_type: &str) -> DictType {
     // base name, before any parameters or trailing words
     let base = up.split(['(', ' ']).next().unwrap_or("").trim();
     match base {
-        "TINYINT" | "SMALLINT" | "INTEGER" | "BIGINT" | "HUGEINT" | "UTINYINT"
-        | "USMALLINT" | "UINTEGER" | "UBIGINT" | "UHUGEINT" | "FLOAT" | "REAL"
-        | "DOUBLE" | "INT1" | "INT2" | "INT4" | "INT8" | "SHORT" | "INT"
-        | "SIGNED" | "LONG" | "FLOAT4" | "FLOAT8" => DictType::Number,
+        "TINYINT" | "SMALLINT" | "INTEGER" | "BIGINT" | "HUGEINT" | "UTINYINT" | "USMALLINT"
+        | "UINTEGER" | "UBIGINT" | "UHUGEINT" | "FLOAT" | "REAL" | "DOUBLE" | "INT1" | "INT2"
+        | "INT4" | "INT8" | "SHORT" | "INT" | "SIGNED" | "LONG" | "FLOAT4" | "FLOAT8" => {
+            DictType::Number
+        }
 
-        "VARCHAR" | "CHAR" | "BPCHAR" | "TEXT" | "STRING" | "BLOB" | "BYTEA"
-        | "BINARY" | "VARBINARY" | "UUID" | "TIME" => DictType::String,
+        "VARCHAR" | "CHAR" | "BPCHAR" | "TEXT" | "STRING" | "BLOB" | "BYTEA" | "BINARY"
+        | "VARBINARY" | "UUID" | "TIME" => DictType::String,
 
         "BOOLEAN" | "BOOL" | "LOGICAL" => DictType::Boolean,
         "DATE" => DictType::Date,
@@ -84,8 +85,19 @@ mod tests {
     #[test]
     fn integers_and_reals_are_number() {
         for t in [
-            "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT",
-            "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT", "FLOAT", "REAL", "DOUBLE",
+            "TINYINT",
+            "SMALLINT",
+            "INTEGER",
+            "BIGINT",
+            "HUGEINT",
+            "UTINYINT",
+            "USMALLINT",
+            "UINTEGER",
+            "UBIGINT",
+            "UHUGEINT",
+            "FLOAT",
+            "REAL",
+            "DOUBLE",
         ] {
             assert_eq!(dict_type_for(t), DictType::Number, "{t}");
         }
@@ -117,7 +129,10 @@ mod tests {
     #[test]
     fn timestamp_family_is_datetime() {
         assert_eq!(dict_type_for("TIMESTAMP"), DictType::Datetime);
-        assert_eq!(dict_type_for("TIMESTAMP WITH TIME ZONE"), DictType::Datetime);
+        assert_eq!(
+            dict_type_for("TIMESTAMP WITH TIME ZONE"),
+            DictType::Datetime
+        );
         assert_eq!(dict_type_for("TIMESTAMP_MS"), DictType::Datetime);
     }
 
@@ -150,6 +165,9 @@ mod tests {
     #[test]
     fn matching_is_case_insensitive() {
         assert_eq!(dict_type_for("integer"), DictType::Number);
-        assert_eq!(dict_type_for("timestamp with time zone"), DictType::Datetime);
+        assert_eq!(
+            dict_type_for("timestamp with time zone"),
+            DictType::Datetime
+        );
     }
 }

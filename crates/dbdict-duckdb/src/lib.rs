@@ -82,11 +82,15 @@ fn parse_describe(json: &str) -> Result<Vec<ColumnTypeInfo>, DuckdbError> {
             let name = row
                 .get("column_name")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| DuckdbError::Parse("row missing string `column_name`".to_string()))?;
+                .ok_or_else(|| {
+                    DuckdbError::Parse("row missing string `column_name`".to_string())
+                })?;
             let duckdb_type = row
                 .get("column_type")
                 .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| DuckdbError::Parse("row missing string `column_type`".to_string()))?;
+                .ok_or_else(|| {
+                    DuckdbError::Parse("row missing string `column_type`".to_string())
+                })?;
             Ok(ColumnTypeInfo {
                 name: name.to_string(),
                 dict_type: dict_type_for(duckdb_type),
