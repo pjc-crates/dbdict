@@ -21,22 +21,88 @@ use quarto_yaml_validation::error::ValidationErrorKind;
 use quarto_yaml_validation::{Schema, SchemaRegistry, ValidationDiagnostic, ValidationError};
 
 use crate::join_expr::{JoinExpr, QCol};
-use crate::model::{Cardinality, Column, DataDict, Scalar, Spanned, Table};
+use crate::model::{Cardinality, Column, DataDict, Format, Scalar, Spanned, Table};
 use crate::problem::{Problem, ProblemKind, ProblemSet, Suggestion, subspan};
 use crate::{SourceContext, lower};
 
 /// The canonical documentation URL suggested for `$learn_more`.
 pub const LEARN_MORE_URL: &str = "http://data-dict.tidyverse.org/";
 
-const SCHEMA_YAML: &str = include_str!("../../../schema.yaml");
+// each spec version has its own embedded schema; `load` picks one by peeking
+// at the document's `$version` (see `select_schema`)
+const LEGACY_SCHEMA_YAML: &str = include_str!("../../../schema.yaml");
+const RICH_SCHEMA_YAML: &str = include_str!("../../../schema-0.2.yaml");
 
-fn schema() -> &'static Schema {
+fn compile_schema(schema_yaml: &str) -> Schema {
+    let yaml = quarto_yaml::parse(schema_yaml).expect("embedded schema must be parseable YAML");
+    Schema::from_yaml(&yaml).expect("embedded schema must compile to a valid schema")
+}
+
+/// The legacy (0.1.0) schema: coarse types, per-table parquet source.
+fn legacy_schema() -> &'static Schema {
+    // OnceLock: compile the schema on first use, then share the single
+    // compiled copy across threads — a `static` can't hold a lazily-built
+    // value directly
     static SCHEMA: OnceLock<Schema> = OnceLock::new();
-    SCHEMA.get_or_init(|| {
-        let yaml =
-            quarto_yaml::parse(SCHEMA_YAML).expect("embedded schema.yaml must be parseable YAML");
-        Schema::from_yaml(&yaml).expect("embedded schema.yaml must compile to a valid schema")
-    })
+    SCHEMA.get_or_init(|| compile_schema(LEGACY_SCHEMA_YAML))
+}
+
+/// The rich (0.2.0) schema: free-form DuckDB types, typedef aliases.
+fn rich_schema() -> &'static Schema {
+    static SCHEMA: OnceLock<Schema> = OnceLock::new();
+    SCHEMA.get_or_init(|| compile_schema(RICH_SCHEMA_YAML))
+}
+
+/// A `$version` the document declares but this tool does not support: the
+/// value (rendered for the message) and its span.
+struct UnsupportedVersion {
+    version: String,
+    span: SourceInfo,
+}
+
+/// The schema `doc` asks to be validated against: the document declares its
+/// own format via `$version` — `0.1.0` legacy, `0.2.0` rich. Only a truly
+/// *absent* `$version` falls through to the legacy schema (whose required-key
+/// error reports it); any other value, string or not, takes the
+/// unsupported-version path. Catching non-strings here matters because an
+/// unquoted `$version: 0.2` is a YAML float — letting it hit the legacy
+/// schema would report the misleading "must be 0.1.0" enum error.
+// the Err carries a SourceInfo, making the Result large enough for clippy to
+// suggest boxing; called once per validation, so readability wins over size
+#[allow(clippy::result_large_err)]
+fn select_schema(doc: &YamlWithSourceInfo) -> Result<&'static Schema, UnsupportedVersion> {
+    let Some(version) = doc.get_hash_value("$version") else {
+        return Ok(legacy_schema());
+    };
+    match version.yaml.as_str() {
+        Some("0.1.0") => Ok(legacy_schema()),
+        Some("0.2.0") => Ok(rich_schema()),
+        _ => Err(UnsupportedVersion {
+            version: version_text(version),
+            span: version.source_info.clone(),
+        }),
+    }
+}
+
+/// Render a `$version` value for the unsupported-version message. `$version`
+/// should be a string; a number, boolean, or null arrives when the value was
+/// written unquoted, so spell those out rather than showing nothing.
+fn version_text(version: &YamlWithSourceInfo) -> String {
+    let yaml = &version.yaml;
+    if let Some(s) = yaml.as_str() {
+        s.to_string()
+    } else if let Some(i) = yaml.as_i64() {
+        i.to_string()
+    } else if let Some(f) = yaml.as_f64() {
+        f.to_string()
+    } else if let Some(b) = yaml.as_bool() {
+        b.to_string()
+    } else if yaml.is_null() {
+        "null".to_string()
+    } else {
+        // a list or mapping — there is no scalar to quote
+        "this value".to_string()
+    }
 }
 
 /// Validate the `dbdict.yaml` file at `path`. The returned [`ProblemSet`]
@@ -81,8 +147,24 @@ pub(crate) fn load(path: &Path) -> Result<(ProblemSet, YamlWithSourceInfo), Prob
     let file_id = quarto_yaml::file_id_for_filename(&filename);
     source.add_file_with_id(file_id, filename, Some(content));
 
+    // unsupported version: report with the value's span and stop — validating
+    // against either schema would produce a misleading enum error
+    let schema = match select_schema(&doc) {
+        Ok(schema) => schema,
+        Err(unsupported) => {
+            let mut problems = ProblemSet::new(source);
+            problems.push(Problem::schema(
+                "version",
+                format!("`{}` is not a supported spec version", unsupported.version),
+                Some(unsupported.span),
+                Some("Supported versions: \"0.1.0\" (legacy), \"0.2.0\" (rich/duckdb).".into()),
+            ));
+            return Err(problems);
+        }
+    };
+
     let registry = SchemaRegistry::new();
-    if let Err(err) = quarto_yaml_validation::validate(&doc, schema(), &registry, &source) {
+    if let Err(err) = quarto_yaml_validation::validate(&doc, schema, &registry, &source) {
         // Lift the structural error into our own vocabulary so it renders through
         // the annotate-snippets pipeline like every other diagnostic, rather than
         // the validator's own (ariadne) text.
@@ -160,14 +242,26 @@ fn check_spec(dict: &DataDict, out: &mut ProblemSet) {
         }
         let mut seen: HashMap<String, SourceInfo> = HashMap::new();
         for col in &table.columns {
+            // S07/S08/S12–S14 are written against the legacy coarse type
+            // vocabulary (`number(quantity)`, `datetime`, …), which the rich
+            // format replaces with duckdb type expressions. skipped for rich
+            // documents until they are reworked to classify duckdb types
+            // (planned alongside the round-trip validation seam). gated *in
+            // place* rather than hoisted: two problems at the same span keep
+            // their push order when sorted, so moving a call would reorder
+            // legacy diagnostics
+            let coarse_types = dict.format == Format::Legacy;
             validate_s01_foreign_key(dict, table, col, out);
-            validate_s08_units(table, col, out);
-            validate_s14_time_zone(table, col, out);
+            if coarse_types {
+                validate_s08_units(table, col, out);
+                validate_s14_time_zone(table, col, out);
+            }
             validate_s15_time_zone_format(table, col, out);
             if validate_s11_column_name(table, col, out) {
                 validate_s10_unique_name(table, col, &mut seen, out);
             }
-            if validate_s07_representation(table, col, out)
+            if coarse_types
+                && validate_s07_representation(table, col, out)
                 && validate_s12_value_types(table, col, out)
             {
                 validate_s13_range_order(table, col, out);
@@ -1101,7 +1195,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn embedded_schema_compiles() {
-        let _ = schema();
+    fn embedded_schemas_compile() {
+        let _ = legacy_schema();
+        let _ = rich_schema();
     }
 }

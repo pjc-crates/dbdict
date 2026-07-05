@@ -62,6 +62,18 @@ pub(crate) fn compare_dataset(
     let Some(dict) = validate_and_lower(&doc, &mut problems) else {
         return problems;
     };
+    // the rich format's dict-level duckdb source is not wired into the meta
+    // and data levels yet (that lands with the round-trip rework). one honest
+    // pre-flight beats a misleading M04 per table telling the user to add a
+    // per-table `source` the rich schema rejects
+    if dict.format == model::Format::Rich {
+        problems.push(Problem::preflight(
+            ProblemKind::RichFormatUnsupported,
+            "the rich (0.2.0) format is not yet supported by metadata or data validation — \
+             only `validate-spec` covers it today",
+        ));
+        return problems;
+    }
     let Some(tables) = select_tables(&dict, table, &mut problems) else {
         return problems;
     };

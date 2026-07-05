@@ -1,0 +1,13 @@
+---
+source: crates/dbdict/tests/rich.rs
+---
+$version: "0.3.0"
+tables: []
+────────────────────────────────────────
+error: [version]
+ --> dict.yaml:1:11
+  |
+1 | $version: "0.3.0"
+  |           ^^^^^ `0.3.0` is not a supported spec version
+  |
+  = help: Supported versions: "0.1.0" (legacy), "0.2.0" (rich/duckdb).

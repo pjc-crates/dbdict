@@ -1,0 +1,15 @@
+---
+source: crates/dbdict/tests/rich.rs
+---
+$version: "0.2.0"
+$learn_more: http://data-dict.tidyverse.org/
+typedef:
+  money: DECIMAL(18, 4)
+  money: DECIMAL(12, 2)
+tables: []
+────────────────────────────────────────
+error: [Q-1-20]
+ --> dict.yaml:5:3
+  |
+5 |   money: DECIMAL(12, 2)
+  |   ^^^^^ Duplicate key 'money'

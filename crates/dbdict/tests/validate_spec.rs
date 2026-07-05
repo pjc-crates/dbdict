@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-use common::{Diagnostic, assert_snapshot};
+use common::{Diagnostic, assert_snapshot, diagnostics};
 use dbdict::Severity;
 use indoc::indoc;
 
@@ -110,20 +110,6 @@ fn warning_dict(body: &str) -> Diagnostic {
 
 fn warning_raw(yaml: &str) -> Diagnostic {
     warning(&raw(yaml))
-}
-
-/// Render the problems of the given `severity` for a document, in source order.
-/// Pre-flight failures (I/O, unparseable YAML, structural schema errors) are
-/// error-severity problems like any other, so they surface here when collecting
-/// errors and are skipped when collecting warnings.
-fn diagnostics(path: &Path, severity: Severity) -> Vec<String> {
-    let problems = dbdict::validate_spec(path);
-    problems
-        .items
-        .iter()
-        .filter(|p| p.severity == severity)
-        .map(|p| p.to_text(&problems.source))
-        .collect()
 }
 
 // --- fixture helpers -----------------------------------------------------
@@ -868,6 +854,29 @@ fn s14_time_zone_on_non_datetime() {
     diagnostic.assert_contains(&["S14", "type `date`"]);
     #[cfg(unix)]
     assert_snapshot!(diagnostic);
+}
+
+// A malformed `time_zone` on a non-datetime column trips S14 and S15 at the
+// same span; both problems tie in the source-order sort, which is stable, so
+// their rendered order is the *push* order in `check_spec` — S14 first. This
+// pins that order: the rich-format gate must not reorder legacy diagnostics.
+#[test]
+fn s14_before_s15_when_both_fire() {
+    let diagnostic = failing_dict(indoc! {"
+        tables:
+          - name: events
+            columns:
+              - name: event_day
+                type: date
+                time_zone: PST
+                range: [2020-01-01, 2024-12-31]
+    "});
+    let text = &diagnostic.rendered;
+    let (s14, s15) = (text.find("S14"), text.find("S15"));
+    assert!(
+        s14.is_some() && s15.is_some() && s14 < s15,
+        "expected S14 to render before S15, got:\n{text}"
+    );
 }
 
 // A `time_zone` outside the accepted shape (bare abbreviation, unknown area) is

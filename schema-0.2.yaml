@@ -1,20 +1,28 @@
-# Schema for legacy data-dict.yaml documents (spec version 0.1.0). The rich
-# (0.2.0) format has its own schema, schema-0.2.yaml, which duplicates several
-# subschemas from this file (the column descriptive keys, relationships,
-# glossary, version, the name anyOf blocks) — an edit to a shared shape must
-# be made in BOTH files.
+# Schema for rich (spec version 0.2.0) dbdict.yaml documents.
+#
+# The rich format types columns in DuckDB's native type domain (free-form
+# type expressions plus a `typedef:` alias layer) instead of the legacy
+# coarse vocabulary; `schema.yaml` remains the schema for legacy 0.1.0
+# documents. `validate_spec::load` selects between the two by peeking at
+# `$version`.
 #
 # Written in the quarto-cli YAML schema dialect understood by the
 # quarto-yaml-validation crate. See site/spec.md for the prose specification.
+#
+# NOTE: several subschemas (the column descriptive keys, relationships,
+# glossary, version, the name anyOf blocks) are duplicated from schema.yaml —
+# an edit to a shared shape must be made in BOTH files.
 #
 # Conventions in this schema:
 #   - All objects are closed (`closed: true`): unknown keys are rejected.
 #     This is appropriate while the spec is pre-1.0; bump the schema with the
 #     spec when new fields are added.
-#   - The column subschema is a single flat object. Type-specific rules
-#     (e.g. `values` required for `type: enum`, `range` only valid on ordered
-#     / date types) are enforced by the validator (S07, S08) rather than
-#     structurally, to avoid repeating the same object shape for each type.
+#   - The column subschema is a single flat object. The legacy coarse-type
+#     rules (S07/S08/S12–S14: `values` required for enums, `units` only on
+#     quantities, …) do NOT run for rich documents — they are written against
+#     the coarse vocabulary this format replaces, and their duckdb-type
+#     rework is pending. The descriptive keys (`values`/`range`/`examples`/
+#     `units`/`time_zone`) are kept as optional metadata meanwhile.
 #   - Cross-table / cross-field semantics (foreign-key targets really exist,
 #     `join` expressions parse, `conflicts` columns appear in both sides) are
 #     out of scope for the schema and belong in a separate validator.
@@ -25,19 +33,43 @@ object:
   properties:
 
     "$version":
-      enum: [0.1.0]
+      enum: [0.2.0]
       description: >
-        Version of the data-dict.yaml spec this document conforms to.
+        Version of the dbdict.yaml spec this document conforms to.
 
     # Optional in the schema (its absence is a warning, not an error — see
     # S09 in validate_spec.rs); a URL where readers can learn about the format.
     "$learn_more": string
 
-    # Descriptive keys for the whole dataset. `name` is a display title with 
+    # Descriptive keys for the whole dataset. `name` is a display title with
     # no uniqueness constraints; all three are optional.
     name: string
     description: string
     details: string
+
+    # Global type aliases: `name → native DuckDB type expression`. An alias
+    # may be used as a column `type:` or inside another typedef's expression
+    # (compounding). Cycle/duplicate detection and expression validity are the
+    # validator's job, not the schema's.
+    typedef:
+      object:
+        additionalProperties: string
+
+    # Where the data lives: one dictionary describes one DuckDB database
+    # (unlike the legacy format's per-table parquet files). `file` is resolved
+    # relative to the dictionary; an absolute path is used as-is. Each dict
+    # table is matched to the database relation of the same name.
+    source:
+      object:
+        closed: true
+        required: [duckdb]
+        properties:
+          duckdb:
+            object:
+              closed: true
+              required: [file]
+              properties:
+                file: string
 
     tables:
       arrayOf:
@@ -53,15 +85,16 @@ object:
               anyOf:
                 - string
                 - null
+            # Optional human-facing display name.
+            label: string
             description: string
             details: string
 
-            source:
+            # Table-scoped type aliases; a name here shadows the same global
+            # name for this table's columns.
+            typedef:
               object:
-                closed: true
-                minProperties: 1
-                properties:
-                  parquet: string
+                additionalProperties: string
 
             columns:
               arrayOf:
@@ -76,16 +109,22 @@ object:
                       anyOf:
                         - string
                         - null
+                    # Optional human-facing display name.
+                    label: string
                     description: string
                     details: string
                     display:
                       enum: [restricted]
                     units: string
-                    # Shape (S15) and placement (S14) are checked semantically
+                    # Shape is checked semantically (S15); the legacy
+                    # placement rule (S14) does not run for rich documents
                     time_zone: string
-                    type:
-                      enum: ["enum", "number(ordinal)", "number(quantity)", "date",
-                             "datetime", "number", "number(id)", "string", "boolean"]
+                    # A free-form DuckDB type expression (`DECIMAL(18, 4)`,
+                    # `STRUCT(city VARCHAR, postcode INTEGER)`, …) or the name
+                    # of a `typedef:` alias. Whether the expression is *valid*
+                    # is DuckDB's call, made when the dictionary is
+                    # instantiated in a scratch database (validate-meta).
+                    type: string
                     values:
                       anyOf:
                         - arrayOf:                  # [M, F, U]

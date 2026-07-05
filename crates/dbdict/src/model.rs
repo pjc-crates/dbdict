@@ -21,8 +21,44 @@ impl<T> Spanned<T> {
     }
 }
 
+/// Which spec format the document declared via `$version`. Carried on the
+/// lowered dictionary so checks that only make sense for one format (e.g. the
+/// coarse-type rules S07/S08/S12–S14) can tell them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    /// `0.1.0` — coarse semantic types (`number`, `string`, …) + parquet.
+    Legacy,
+    /// `0.2.0` — DuckDB-native types with `typedef:` aliases.
+    Rich,
+}
+
+/// A named type alias (rich format): `name` expands to the native DuckDB
+/// type expression `expr`. An expression may mention other aliases
+/// (compounding); resolution order and cycle detection are the validator's
+/// job, the model just carries the pairs in document order.
+#[derive(Debug, Clone)]
+pub struct Typedef {
+    pub name: Spanned<String>,
+    pub expr: Spanned<String>,
+}
+
+/// The rich format's dictionary-level source: the one DuckDB database this
+/// dictionary describes. (The legacy format instead has a per-table
+/// [`Source`] pointing at a parquet file.)
+#[derive(Debug, Clone)]
+pub struct DictSource {
+    pub span: SourceInfo,
+    /// database file path, relative to the dictionary (absolute used as-is)
+    pub file: Spanned<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct DataDict {
+    pub format: Format,
+    /// global `typedef:` aliases (rich format), in document order
+    pub typedefs: Vec<Typedef>,
+    /// dictionary-level `source:` (rich format)
+    pub source: Option<DictSource>,
     pub tables: Vec<Table>,
     pub relationships: Vec<Relationship>,
 }
@@ -38,8 +74,14 @@ impl DataDict {
 #[derive(Debug, Clone)]
 pub struct Table {
     pub name: Spanned<String>,
+    /// Optional human-facing display name (rich format).
+    pub label: Option<Spanned<String>>,
+    /// Table-scoped `typedef:` aliases (rich format); a name here shadows the
+    /// same global name for this table's columns.
+    pub typedefs: Vec<Typedef>,
     pub columns: Vec<Column>,
-    /// Where the table's data lives, when it declares a `source`. Optional
+    /// Where the table's data lives, when it declares a `source` (legacy
+    /// format — the rich format's source lives on [`DataDict`]). Optional
     /// for spec validation; required for metadata validation (M04).
     pub source: Option<Source>,
     /// Spans of the `description`/`details` keys, when present. Held so S16 can
@@ -64,6 +106,8 @@ impl Table {
 #[derive(Debug, Clone)]
 pub struct Column {
     pub name: Spanned<String>,
+    /// Optional human-facing display name (rich format).
+    pub label: Option<Spanned<String>>,
     pub constraints: Vec<Spanned<Constraint>>,
     pub col_type: Option<Spanned<String>>,
     pub values: Option<SourceInfo>,

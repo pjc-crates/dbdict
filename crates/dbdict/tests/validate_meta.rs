@@ -60,6 +60,44 @@ fn animals_dict(dir: &Path, parquet: &str, columns: &str) -> PathBuf {
     )
 }
 
+// A rich (0.2.0) document reaching the metadata level reports one honest
+// "not yet supported" pre-flight — not a misleading M04 per table telling the
+// user to add a per-table `source` the rich schema rejects. Goes away when
+// the duckdb round-trip is wired in.
+#[test]
+fn rich_format_gets_unsupported_preflight_not_m04() {
+    let dir = temp_dir();
+    let yaml = common::write_yaml(
+        &dir,
+        indoc! {"
+            $version: \"0.2.0\"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: trades
+                columns:
+                  - name: qty
+                    type: BIGINT
+        "},
+    );
+
+    let problems = validate_meta(&yaml, None);
+    assert_eq!(problems.status(), Status::Error);
+    assert_eq!(problems.items.len(), 1, "got {:?}", problems.items);
+    let problem = &problems.items[0];
+    assert!(
+        problem.message.contains("not yet supported"),
+        "got {:?}",
+        problem.message
+    );
+    assert!(
+        !matches!(problem.kind, ProblemKind::MissingSource),
+        "a rich table must not report the legacy M04"
+    );
+}
+
 #[test]
 fn matching_dict_and_parquet() {
     let dir = dir_with_parquet();

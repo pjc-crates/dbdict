@@ -150,6 +150,10 @@ pub enum ProblemKind {
     ExtraInData { actual: String },
     /// `M04` — a table validated against data declares no `source`.
     MissingSource,
+    /// A rich (0.2.0) document reached the metadata/data level, which only
+    /// reads the legacy per-table parquet `source` so far. Transitional:
+    /// removed when the duckdb round-trip comparison is wired in.
+    RichFormatUnsupported,
     /// `M05` — a table's `source` is declared but its data can't be read (the
     /// `parquet` file is absent or unreadable).
     UnreadableSource,

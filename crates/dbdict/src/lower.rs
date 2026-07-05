@@ -10,20 +10,48 @@ use quarto_yaml::YamlWithSourceInfo;
 
 use crate::join_expr::JoinExpr;
 use crate::model::{
-    Cardinality, Column, Constraint, DataDict, Relationship, Representation, Scalar, Source,
-    Spanned, Table,
+    Cardinality, Column, Constraint, DataDict, DictSource, Format, Relationship, Representation,
+    Scalar, Source, Spanned, Table, Typedef,
 };
 use crate::problem::{Problem, ProblemSet, Severity};
 
 /// Lower an AST, collecting any lowering problems (currently only S04
 /// for unparseable join expressions).
 pub fn lower(root: &YamlWithSourceInfo, problems: &mut ProblemSet) -> DataDict {
+    // the schema has already pinned `$version` to one of the two supported
+    // values, so anything but 0.2.0 means legacy here
+    let format = match root
+        .get_hash_value("$version")
+        .and_then(|v| v.yaml.as_str())
+    {
+        Some("0.2.0") => Format::Rich,
+        _ => Format::Legacy,
+    };
+
+    // global typedef aliases (rich format; the schema keeps the key out of
+    // legacy documents, so this is simply empty there)
+    let typedefs = match root.get_hash_value("typedef") {
+        Some(node) => lower_typedefs(node, problems),
+        None => Vec::new(),
+    };
+
+    // dictionary-level source (rich format): the one duckdb database
+    let source = root.get_hash_value("source").and_then(|n| {
+        let duckdb = n.get_hash_value("duckdb")?;
+        let file = duckdb.get_hash_value("file")?;
+        let path = file.yaml.as_str()?;
+        Some(DictSource {
+            span: n.source_info.clone(),
+            file: Spanned::new(path.to_string(), file.source_info.clone()),
+        })
+    });
+
     let mut tables = Vec::new();
     if let Some(t_node) = root.get_hash_value("tables")
         && let Some(items) = t_node.as_array()
     {
         for item in items {
-            if let Some(table) = lower_table(item) {
+            if let Some(table) = lower_table(item, problems) {
                 tables.push(table);
             }
         }
@@ -39,12 +67,46 @@ pub fn lower(root: &YamlWithSourceInfo, problems: &mut ProblemSet) -> DataDict {
     }
 
     DataDict {
+        format,
+        typedefs,
+        source,
         tables,
         relationships,
     }
 }
 
-fn lower_table(node: &YamlWithSourceInfo) -> Option<Table> {
+/// Lower a `typedef:` mapping into its alias pairs, in document order.
+/// A non-string *name* is reported (S18) — the schema constrains typedef
+/// values only, so a bare `123:` or `true:` key would otherwise vanish
+/// silently. A non-string *value* is dropped without a report here because
+/// the schema has already rejected the document.
+fn lower_typedefs(node: &YamlWithSourceInfo, problems: &mut ProblemSet) -> Vec<Typedef> {
+    let Some(entries) = node.as_hash() else {
+        return Vec::new();
+    };
+    let mut typedefs = Vec::new();
+    for entry in entries {
+        let Some(name) = entry.key.yaml.as_str() else {
+            problems.push_spec_error(
+                "S18",
+                "A typedef name must be a string.",
+                "is not a string",
+                [entry.key_span.clone()],
+            );
+            continue;
+        };
+        let Some(expr) = entry.value.yaml.as_str() else {
+            continue;
+        };
+        typedefs.push(Typedef {
+            name: Spanned::new(name.to_string(), entry.key_span.clone()),
+            expr: Spanned::new(expr.to_string(), entry.value_span.clone()),
+        });
+    }
+    typedefs
+}
+
+fn lower_table(node: &YamlWithSourceInfo, problems: &mut ProblemSet) -> Option<Table> {
     let entries = node.as_hash()?;
     let name_entry = entries
         .iter()
@@ -79,6 +141,11 @@ fn lower_table(node: &YamlWithSourceInfo) -> Option<Table> {
     };
     Some(Table {
         name: Spanned::new(name.to_string(), name_entry.value_span.clone()),
+        label: lower_string_value(node, "label"),
+        typedefs: match node.get_hash_value("typedef") {
+            Some(td) => lower_typedefs(td, problems),
+            None => Vec::new(),
+        },
         columns,
         source,
         description: key_span("description"),
@@ -86,9 +153,21 @@ fn lower_table(node: &YamlWithSourceInfo) -> Option<Table> {
     })
 }
 
+/// Lower a string-valued key of `node` into a `Spanned<String>`, or `None`
+/// when the key is absent or not a string.
+fn lower_string_value(node: &YamlWithSourceInfo, key: &str) -> Option<Spanned<String>> {
+    let entries = node.as_hash()?;
+    let entry = entries.iter().find(|e| e.key.yaml.as_str() == Some(key))?;
+    let s = entry.value.yaml.as_str()?;
+    // value_span, not value.source_info, to match the rest of the file
+    // (identical for plain scalars, but one convention beats two)
+    Some(Spanned::new(s.to_string(), entry.value_span.clone()))
+}
+
 fn lower_column(node: &YamlWithSourceInfo) -> Option<Column> {
     let entries = node.as_hash()?;
     let mut name: Option<Spanned<String>> = None;
+    let mut label: Option<Spanned<String>> = None;
     let mut constraints: Vec<Spanned<Constraint>> = Vec::new();
     let mut col_type: Option<Spanned<String>> = None;
     let mut values: Option<SourceInfo> = None;
@@ -106,6 +185,11 @@ fn lower_column(node: &YamlWithSourceInfo) -> Option<Column> {
                 // parser collapses an empty name to null.
                 let s = entry.value.yaml.as_str().unwrap_or("");
                 name = Some(Spanned::new(s.to_string(), entry.value_span.clone()));
+            }
+            "label" => {
+                if let Some(s) = entry.value.yaml.as_str() {
+                    label = Some(Spanned::new(s.to_string(), entry.value_span.clone()));
+                }
             }
             "type" => {
                 if let Some(s) = entry.value.yaml.as_str() {
@@ -151,6 +235,7 @@ fn lower_column(node: &YamlWithSourceInfo) -> Option<Column> {
     }
     Some(Column {
         name: name?,
+        label,
         constraints,
         col_type,
         values,
@@ -250,5 +335,93 @@ fn lower_relationship(node: &YamlWithSourceInfo, problems: &mut ProblemSet) -> R
         join_text,
         join,
         conflicts,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SourceContext;
+    use indoc::indoc;
+
+    /// parse `yaml` and lower it, discarding problems — these tests assert
+    /// the lowered model's shape, not diagnostics
+    fn lower_str(yaml: &str) -> DataDict {
+        let doc = quarto_yaml::parse(yaml).expect("test yaml must parse");
+        let mut problems = ProblemSet::new(SourceContext::new());
+        lower(&doc, &mut problems)
+    }
+
+    #[test]
+    fn lowers_rich_typedefs_source_and_labels() {
+        let dict = lower_str(indoc! {r#"
+            $version: "0.2.0"
+            typedef:
+              money: DECIMAL(18, 4)
+              address: STRUCT(city VARCHAR, postcode INTEGER)
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: trades
+                label: Trade executions
+                typedef:
+                  money: DECIMAL(12, 2)
+                columns:
+                  - name: qty
+                    label: Quantity
+                    type: money
+        "#});
+
+        assert_eq!(dict.format, Format::Rich);
+
+        // global typedefs, in document order
+        assert_eq!(dict.typedefs.len(), 2);
+        assert_eq!(dict.typedefs[0].name.value, "money");
+        assert_eq!(dict.typedefs[0].expr.value, "DECIMAL(18, 4)");
+        assert_eq!(dict.typedefs[1].name.value, "address");
+
+        // top-level duckdb source
+        let source = dict.source.as_ref().expect("dict-level source");
+        assert_eq!(source.file.value, "warehouse.duckdb");
+
+        // table: label + scoped typedef
+        let table = &dict.tables[0];
+        assert_eq!(
+            table.label.as_ref().expect("table label").value,
+            "Trade executions"
+        );
+        assert_eq!(table.typedefs.len(), 1);
+        assert_eq!(table.typedefs[0].expr.value, "DECIMAL(12, 2)");
+
+        // column: label, type kept verbatim (alias resolution is not lowering's job)
+        let col = &table.columns[0];
+        assert_eq!(col.label.as_ref().expect("column label").value, "Quantity");
+        assert_eq!(col.col_type.as_ref().expect("column type").value, "money");
+    }
+
+    // the schema requires `$version`, but lowering must not assume it: a
+    // missing key falls through the match's `_` arm to legacy
+    #[test]
+    fn missing_version_lowers_as_legacy() {
+        let dict = lower_str("tables: []\n");
+        assert_eq!(dict.format, Format::Legacy);
+    }
+
+    #[test]
+    fn legacy_document_lowers_without_rich_fields() {
+        let dict = lower_str(indoc! {r#"
+            $version: "0.1.0"
+            tables:
+              - name: animals
+                columns:
+                  - name: weight
+                    type: number
+        "#});
+        assert_eq!(dict.format, Format::Legacy);
+        assert!(dict.typedefs.is_empty());
+        assert!(dict.source.is_none());
+        assert!(dict.tables[0].label.is_none());
+        assert!(dict.tables[0].typedefs.is_empty());
     }
 }

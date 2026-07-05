@@ -129,6 +129,21 @@ impl Diagnostic {
     }
 }
 
+/// Render the spec-validation problems of the given `severity` for the
+/// document at `path`, in source order. Pre-flight failures (I/O, unparseable
+/// YAML, structural schema errors) are error-severity problems like any
+/// other, so they surface when collecting errors and are skipped when
+/// collecting warnings.
+pub fn diagnostics(path: &Path, severity: dbdict::Severity) -> Vec<String> {
+    let problems = dbdict::validate_spec(path);
+    problems
+        .items
+        .iter()
+        .filter(|p| p.severity == severity)
+        .map(|p| p.to_text(&problems.source))
+        .collect()
+}
+
 /// Capture a validation result for snapshotting: read the validated YAML from
 /// `path` as the source and [`sanitize`] `rendered` against the file's own
 /// directory (turning its absolute paths into the bare `dict.yaml`).

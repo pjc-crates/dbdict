@@ -47,6 +47,7 @@ When validating the spec, each problem with the dictionary is one of:
 * **Malformed time zone** (S15, error): a `time_zone` is not `naive`, `UTC`, or an IANA `Area/Location` name with a known area. The shape is checked, not the full tz database, so the accepted set doesn't go stale as zones are added or renamed.
 * **Misplaced single-table description** (S16, warning): a dictionary with exactly one table carries `description` or `details` on that table; for a single-table dictionary these belong at the top level.
 * **Malformed version** (S17, error): the top-level `version` does not give exactly one of `number`, `date`, or `hash`; its `number` is not three dot-separated numeric components (`MAJOR.MINOR.PATCH`) with an optional pre-release/build suffix; or its `date` is not a valid ISO 8601 date (`YYYY-MM-DD`).
+* **Non-string typedef name** (S18, error, rich format only): a `typedef:` key is not a string (an unquoted `123:` or `true:` parses as a number or boolean). The schema constrains typedef *values* only, so without this check the alias would silently vanish from the dictionary.
 
 (An `enum`'s `values` are constrained structurally by the schema rather than by an `S` check: each value must be a scalar, and in the map form each label must be a string. The `version` map's allowed keys and their value types are likewise structural; S17 covers only the semantics the schema can't express.)
 
