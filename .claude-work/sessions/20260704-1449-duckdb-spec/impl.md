@@ -99,33 +99,135 @@ Prove mechanism **C** (round-trip) before building the feature on it.
 - **review (2026-07-05):** three independent agents (correctness / idiom /
       tests-plan); all findings fixed or explicitly declined this same day.
 
-### phase 3: `validate-meta` rewrite (full fidelity, round-trip)
-- [ ] seam: build the scratch in-memory db from the dict (`CREATE TYPE` +
-      `CREATE TABLE`), `DESCRIBE` → **expected** `(name, canonical_type)`; open
-      the real duckdb db → **actual** `(name, canonical_type)`; diff.
-- [ ] resolve `source.duckdb.file` **relative to the dict** (absolute used
-      as-is) — promised in schema/model comments, implemented nowhere yet
-      (review finding). replace the transitional "rich not supported at this
-      level" pre-flight in `compare_dataset` with the real wiring.
-- [ ] table-set diff (new, enabled by dict-level source): dict table missing
-      from the db, and undocumented db table, each reported.
-- [ ] **rework S07/S08/S12–S15 for rich mode** (moved from phase 2): classify
-      the canonicalized column type (via the scratch-db seam) — enum-like →
-      `values`, numeric/temporal → `range`, etc.; `units` on numerics;
-      `time_zone` on timestamps. legacy mode behaviour unchanged. core stays
-      pure — canonicalization injected via a trait implemented in
-      `dbdict-duckdb`.
-- [ ] reframe M01/M02/M03 as the `(name, type)` diff: type differs → M01 (exact
-      canonical string compare), dict-only → M02, real-only → M03. Map problems
-      back to dict column **source spans by name**.
-- [ ] **retire `types_compatible`** and the coarse comparison.
-- [ ] dict coherence via **fixpoint instantiation**: attempt `CREATE TYPE` for
-      every typedef in document order, retry rejects until stall; the stalled
-      leftovers (cyclic / unknown type) each report duckdb's error at the
-      typedef's source span. bad column types likewise report at their span.
-- **verify (end-to-end):** validate a dict against a real duckdb db — clean
-      match → ok; struct field type wrong → M01 with the exact `STRUCT(...)`
-      diff; dropped documented col → M02; undocumented db col → M03.
+### phase 3: `validate-meta` rewrite (full fidelity, round-trip) — DONE 2026-07-05T23:20:00+12:00
+
+> **decisions (2026-07-05, made while implementing — review at phase end):**
+> - **seam shape:** core defines `rich::DuckdbBackend` (trait: `instantiate`,
+>   `read_schema`, `classify`) + plain data types; `dbdict-duckdb` depends on
+>   `dbdict` and implements it (`NativeDuckdb`); the CLI passes it in.
+>   `validate_meta` gained a third parameter (`&dyn DuckdbBackend`);
+>   `validate_data`'s signature is unchanged (rich data level still a
+>   pre-flight). core stays free of the bundled duckdb build.
+> - **one scratch connection per table** — `CREATE TYPE` names are
+>   database-global, so table-scoped shadowing can't live in one shared
+>   scratch db. globals fixpoint once in their own connection (stage 1, so a
+>   broken global reports once, not per table); each table then gets a fresh
+>   connection with its *effective* typedefs (globals minus shadowed, plus
+>   scoped). global failures in a table's stage are dropped as echoes.
+> - **probe-per-column, not one CREATE TABLE** — each typed column is created
+>   as its own single-column table and DESCRIBEd. canonicalization is
+>   per-column, so this equals the whole-table DESCRIBE, and a bad column
+>   can't take down its table's expected side (no combined-create failure
+>   mode to mis-attribute).
+> - **new codes:** M06 dict table missing from db (error); M07 undocumented
+>   db table/view (warning, mirrors M03, skipped under `--table`); M08
+>   rejected typedef (error, duckdb's reason at the typedef span); M09
+>   rejected column type (error, at the `type:` span). M04/M05 reused at
+>   dictionary level (no per-table source in rich). codes documented in
+>   site/validation.md.
+> - **views count as relations** on the real side (a dict table may be backed
+>   by a view); relations read from `information_schema.tables`, `main`
+>   schema, alphabetical.
+> - **S07/S08/S12–S14 rich semantics are compatibility checks, not
+>   requirements** — the coarse qualifiers (`number(quantity)` vs
+>   `number(id)`) carried intent a bare duckdb type doesn't, so nothing can
+>   be *required*. rejected: `range` on unorderable types (ENUM/BOOLEAN/
+>   composite/other), any representation on BOOLEAN, `units` off numerics,
+>   `time_zone` off timestamps; S12/S13 check range bounds per category
+>   (naive datetimes for TIMESTAMP, offset-carrying for TIMESTAMP WITH TIME
+>   ZONE). they run at the meta level (canonicalization needs the scratch
+>   db) but keep their S codes — rule identity over level. `values` on a
+>   VARCHAR column is legal (categorical columns without a db-side ENUM).
+> - **dict-side checks run before source problems** — instantiation failures
+>   (M08/M09) and the descriptive-key checks report even when the database
+>   is missing/unreadable; M04 (no source at all) still returns early.
+> - `instantiate` panics only if an in-memory duckdb can't be created at all
+>   (resource exhaustion — no dictionary input reaches it); accepted rather
+>   than threading a Result through the seam.
+
+- [x] seam: scratch in-memory db from the dict (`CREATE TYPE` + `CREATE
+      TABLE`), `DESCRIBE` → **expected**; open the real duckdb db (read-only,
+      native crate) → **actual**; diff. (`dbdict::rich` + `dbdict-duckdb::
+      {instantiate, read_schema, NativeDuckdb}`)
+- [x] resolve `source.duckdb.file` **relative to the dict** (absolute as-is);
+      replaced the transitional pre-flight in the *meta* path — `validate-data`
+      keeps an honest data-level pre-flight until the rich data level exists.
+- [x] table-set diff: M06 (dict table missing from db, error) and M07
+      (undocumented db table/view, warning; skipped under `--table`).
+- [x] rework S07/S08/S12–S14 for rich mode via `TypeCategory` classifier
+      (trait method, implemented in dbdict-duckdb, tested against real
+      DESCRIBE spellings); S15 already ran for rich. legacy unchanged.
+- [x] M01/M02/M03 reframed as the `(name, canonical_type)` diff — M01 is an
+      exact string compare of canonical types, problems located at dict spans.
+- [x] `types_compatible` never runs on the rich path (it stays for legacy
+      parquet; the coarse `dict_type_for` mapping in dbdict-duckdb retires
+      with the shell-out reader in phase 4).
+- [x] dict coherence via **fixpoint instantiation**: retry-until-stall
+      `CREATE TYPE`; stalled leftovers (cyclic/unknown) report duckdb's error
+      at the typedef span (M08); rejected column types at their span (M09).
+- **verify (end-to-end): PASSED 2026-07-05** — `dbdict-duckdb/tests/
+      e2e_validate_meta.rs`: clean match → ok; struct field type wrong → M01
+      with the exact `STRUCT(...)` diff both sides; dropped documented col →
+      M02; undocumented db col → M03; cyclic typedefs → M08 pair with
+      duckdb's reason, span-located; missing db file → M05 at the source
+      entry. CLI round-trip test passes (`validate-meta` exit 0 on a clean
+      rich dict + real db). workspace: 202 tests, 0 failed; clippy clean;
+      rustfmt clean.
+
+> **3-agent review (2026-07-05, correctness / idiom / tests-plan) — all
+> findings actioned, verified firsthand against the bundled duckdb before
+> fixing. workspace now 210 tests, 0 failed; clippy + rustfmt clean.**
+> - **BUG (correctness, verified end-to-end): case-sensitivity.** duckdb
+>   identifiers are case-insensitive but case-preserving in DESCRIBE, so a
+>   lowercase dict vs a CamelCase db produced spurious M02/M03/M06/M07. FIXED:
+>   `rich::names_eq` (ASCII case-fold) on every dict↔db name match (table
+>   match, M06, M07, M03, M01 actual-side); the scratch `expected` side and
+>   the `--table` filter stay exact (same-source / user-arg). Type-string
+>   comparison stays exact (canonical types are already normalised). Pinned by
+>   e2e `identifier_case_differences_still_match`.
+> - **SECURITY/correctness (verified: an ATTACH in a type expr created a file
+>   on disk).** duckdb's `execute` runs *all* statements in a string, not one
+>   — the old comment claiming otherwise was false. A dictionary is untrusted
+>   shared input. FIXED: scratch connections open with
+>   `enable_external_access(false)` (blocks ATTACH/COPY/read_csv; normal types
+>   unaffected); comment corrected to state the real safety basis (throwaway
+>   in-memory + external access off + real db read-only). Pinned by
+>   `type_expression_cannot_reach_the_filesystem`.
+> - **correctness: phantom columns.** a malformed type with a top-level comma
+>   made `probe` multi-column, leaking phantom columns into the expected side
+>   (cross-column false-fail / false-pass). FIXED: the per-column probe now
+>   requires exactly one DESCRIBE row, else M09. Pinned by
+>   `malformed_type_with_top_level_comma_is_a_column_failure`.
+> - **idiom/dead-generality: `Instantiated.tables` was `Vec<Option<..>>`** but
+>   no code ever produced `None` (per-column probing can't fail a table
+>   wholesale). Simplified to `Vec<Vec<..>>`; removed the `.and_then(Option::
+>   as_ref)` combinator chains and the never-exercised M02/M03-suppression arm.
+> - **idiom (asked-about): `usize::MAX` sentinel → `Option<usize>`** in
+>   instantiate_table; typedefs now **borrowed** into the fixpoint (no
+>   per-table clone); fixpoint carries each error **with** its index (dropped
+>   the parallel `Vec<Option<String>>` + silent `unwrap_or_default`).
+> - **idiom: `&dyn Fn` filter → `Option<&str>` + `table_selected` helper**;
+>   two hand-built 10-field `Problem` literals (M04/M07) → `Problem::unlocated`
+>   constructor.
+> - **decision recorded + tested: `examples`/`values` are NOT type-checked in
+>   rich mode** (only `range` bounds are). They are illustrative/categorical
+>   documentation; M01's exact type round-trip already pins type correctness.
+>   Pinned by `rich_does_not_type_check_examples_or_values`; documented in
+>   site/validation.md.
+> - **kept on the trait (declined move to a core fn): `classify`.** duckdb owns
+>   canonical spellings, so the classifier lives with the backend (documented);
+>   `fixture_classify` in core tests is not a drift guard (that is
+>   `classify.rs`, pinned against live DESCRIBE) — core tests exercise
+>   diff-logic-given-a-classification, noted in the fixture's doc.
+> - **declined (house rules): consolidating the range logic** duplicated
+>   between `rich.rs` and `validate_spec.rs` — two type vocabularies, short and
+>   stable; added reciprocal `keep in step` cross-reference comments instead.
+> - **added tests** for the review's gaps: M08+M05 interplay, absolute
+>   `source.duckdb.file`, multiple M07s, empty database → M06, case-insensitive
+>   match, plus the two security tests above. stale shell-out module doc in
+>   `dbdict-duckdb/src/lib.rs` corrected (marked the coarse reader transitional,
+>   deleted in phase 4); site/validation.md "scratch tables" reworded to
+>   per-column and the case-insensitive rule noted.
 
 ### phase 4: CLI + docs + polish
 - [ ] CLI: `types duckdb` (native), `validate-meta` wiring; consider an
@@ -138,14 +240,17 @@ Prove mechanism **C** (round-trip) before building the feature on it.
 
 ## open items / risks
 - **Spike outcome** (C vs A vs B) — decided in phase 1, recorded there.
-- **S-check ripple (important):** the free-form `type:` retires the coarse enum
-  that S07/S08/S12–S15 and the column keys `values`/`range`/`examples`/`units`/
-  `time_zone` are built on. Decide their fate in phase 2: which survive as
-  descriptive metadata, which retire, which rework. S01–S06 (FK/join/cardinality)
-  are type-agnostic and survive.
-- **Two duckdb sessions:** real db opened (read-only) for actual types; a
-  separate in-memory session builds the dict scratch schema. Confirm clean
-  separation (no type-name collisions across sessions).
+- **S-check ripple** — RESOLVED in phase 3: reworked as compatibility checks
+  (see the phase-3 decision block); nothing required, misfit combinations
+  rejected. S01–S06 unchanged (type-agnostic).
+- **Two duckdb sessions** — RESOLVED in phase 3: the real db is opened
+  read-only; scratch schemas live in per-table in-memory connections (which
+  is also what makes typedef shadowing possible). No cross-session
+  collisions by construction.
 - **Build cost:** first bundled build is multi-minute + large binary; acceptable
   (self-contained). Subsequent builds cached.
 - Retire the phase-1 feature-gate scaffolding entirely (duckdb mandatory).
+- Phase 4 addition (from phase 3): retire `dict_type_for` + the shell-out
+  `describe`/`column_types` in dbdict-duckdb together with the dead reader;
+  consider a rich *data* level (D01 via duckdb) to replace the remaining
+  `RichFormatUnsupported` pre-flight in `validate-data`.

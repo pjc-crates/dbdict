@@ -1,11 +1,17 @@
 [package]
 name = "dbdict-duckdb"
-description = "DuckDB (CLI shell-out) reader for dbdict.yaml validation"
+description = "Native DuckDB backend for dbdict.yaml validation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
+dbdict.workspace = true
 serde_json.workspace = true
 duckdb.workspace = true
+
+[dev-dependencies]
+# tests build model fixtures by hand, which needs placeholder source spans
+quarto-source-map.workspace = true
+indoc = "2"

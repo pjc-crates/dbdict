@@ -58,6 +58,55 @@ fn multiple_diagnostics_json_output() {
     insta::assert_snapshot!(serde_json::to_string_pretty(&value).unwrap());
 }
 
+/// The whole rich round-trip through the binary: a rich dictionary validated
+/// against a real duckdb database file, cleanly matching.
+#[test]
+fn validate_meta_rich_round_trip_succeeds() {
+    let dir = std::env::temp_dir().join(format!("dbdict-cli-rich-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let conn = duckdb::Connection::open(dir.join("warehouse.duckdb")).expect("create db");
+    conn.execute_batch("CREATE TABLE trades (qty BIGINT, price DECIMAL(12,2));")
+        .expect("create schema");
+    drop(conn); // flush and close before the binary opens it read-only
+
+    let dict = dir.join("dbdict.yaml");
+    std::fs::write(
+        &dict,
+        indoc::indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            typedef:
+              money: DECIMAL(12, 2)
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: trades
+                columns:
+                  - name: qty
+                    type: BIGINT
+                  - name: price
+                    type: money
+        "#},
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("validate-meta")
+        .arg(&dict)
+        .output()
+        .expect("failed to run dbdict");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected a clean round-trip, stderr:\n{stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ok"), "got {stdout:?}");
+}
+
 /// Strip terminal styling (ANSI SGR escapes and OSC-8 hyperlinks) and rewrite
 /// the fixture's absolute path to a stable placeholder, so the rendered
 /// diagnostic can be snapshotted.

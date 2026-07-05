@@ -88,7 +88,9 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
         }
-        Command::ValidateMeta(args) => run_validate(args, dbdict::validate_meta),
+        Command::ValidateMeta(args) => run_validate(args, |path, table| {
+            dbdict::validate_meta(path, table, &dbdict_duckdb::NativeDuckdb)
+        }),
         Command::ValidateData(args) => run_validate(args, dbdict::validate_data),
         Command::Spec => {
             print!("{}", dbdict::SPEC_MD);
@@ -183,13 +185,13 @@ fn resolve_dict_path(path: Option<PathBuf>) -> Result<PathBuf, String> {
     }
 }
 
-/// A validation entry point: `validate_meta` or `validate_data`. Both share the
-/// signature, so `run_validate` is generic over which one it drives.
-type ValidateFn = fn(&Path, Option<&str>) -> ProblemSet;
-
 /// Run a meta or data validation and turn its outcome into rendered output and
-/// an exit code.
-fn run_validate(args: ValidateArgs, validate: ValidateFn) -> ExitCode {
+/// an exit code. `validate` is a closure so the meta level can capture the
+/// duckdb backend it passes into the library.
+fn run_validate(
+    args: ValidateArgs,
+    validate: impl Fn(&Path, Option<&str>) -> ProblemSet,
+) -> ExitCode {
     let dict = match resolve_dict_path(Some(args.dict)) {
         Ok(dict) => dict,
         Err(err) => {

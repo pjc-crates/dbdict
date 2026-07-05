@@ -18,6 +18,7 @@ pub mod join_expr;
 pub mod lower;
 pub mod model;
 pub mod problem;
+pub mod rich;
 pub mod validate_data;
 pub mod validate_meta;
 pub mod validate_spec;
@@ -42,47 +43,68 @@ pub enum Level {
     Data,
 }
 
-/// The shared prologue for `validate_meta` and `validate_data`, so they differ
-/// only in the `checks` they pass.
+/// The shared prologue for every dataset-comparing level: load the document,
+/// validate the spec, and lower to the model. `Err` carries the problems found
+/// when validation cannot continue past the spec level.
+pub(crate) fn load_and_lower(dict_path: &Path) -> Result<(ProblemSet, DataDict), ProblemSet> {
+    // `?` works here because both sides of the Result carry a ProblemSet
+    let (mut problems, doc) = load(dict_path)?;
+    match validate_and_lower(&doc, &mut problems) {
+        Some(dict) => Ok((problems, dict)),
+        None => Err(problems),
+    }
+}
+
+/// The legacy (parquet) dataset comparison shared by `validate_meta` and
+/// `validate_data`, so they differ only in the `checks` they pass.
 ///
-/// Validates the spec first and stops if it has errors. Otherwise it validates
-/// every table (or just `table`, when named), locating each table's data through
-/// its `source` and reading the parquet file `source.parquet` points at, resolved
-/// relative to `dict_path`. A table with no `source` (M04) or an unreadable one
-/// (M05) is reported and skipped; the remaining tables are still checked.
+/// Validates every table (or just `table`, when named), locating each table's
+/// data through its `source` and reading the parquet file `source.parquet`
+/// points at, resolved relative to `dict_path`. A table with no `source` (M04)
+/// or an unreadable one (M05) is reported and skipped; the remaining tables
+/// are still checked.
+pub(crate) fn compare_parquet(
+    dict_path: &Path,
+    dict: &DataDict,
+    table: Option<&str>,
+    problems: &mut ProblemSet,
+    checks: impl Fn(&Table, &Path, &[(String, String)], &mut ProblemSet),
+) {
+    let Some(tables) = select_tables(dict, table, problems) else {
+        return;
+    };
+    let base_dir = dict_path.parent().unwrap_or_else(|| Path::new(""));
+    for table in tables {
+        if let Some((parquet_path, actual)) = read_parquet(table, base_dir, problems) {
+            checks(table, &parquet_path, &actual, problems);
+        }
+    }
+}
+
+/// The `validate_data` driver: spec first, then the legacy parquet comparison.
+///
+/// The rich format's data level is not built yet (the round-trip rework covers
+/// metadata only), so a rich document gets one honest pre-flight instead of a
+/// misleading M04 per table telling the user to add a per-table `source` the
+/// rich schema rejects.
 pub(crate) fn compare_dataset(
     dict_path: &Path,
     table: Option<&str>,
     checks: impl Fn(&Table, &Path, &[(String, String)], &mut ProblemSet),
 ) -> ProblemSet {
-    let (mut problems, doc) = match load(dict_path) {
+    let (mut problems, dict) = match load_and_lower(dict_path) {
         Ok(loaded) => loaded,
         Err(problems) => return problems,
     };
-    let Some(dict) = validate_and_lower(&doc, &mut problems) else {
-        return problems;
-    };
-    // the rich format's dict-level duckdb source is not wired into the meta
-    // and data levels yet (that lands with the round-trip rework). one honest
-    // pre-flight beats a misleading M04 per table telling the user to add a
-    // per-table `source` the rich schema rejects
     if dict.format == model::Format::Rich {
         problems.push(Problem::preflight(
             ProblemKind::RichFormatUnsupported,
-            "the rich (0.2.0) format is not yet supported by metadata or data validation — \
-             only `validate-spec` covers it today",
+            "the rich (0.2.0) format is not yet supported by data validation — \
+             `validate-spec` and `validate-meta` cover it today",
         ));
         return problems;
     }
-    let Some(tables) = select_tables(&dict, table, &mut problems) else {
-        return problems;
-    };
-    let base_dir = dict_path.parent().unwrap_or_else(|| Path::new(""));
-    for table in tables {
-        if let Some((parquet_path, actual)) = read_parquet(table, base_dir, &mut problems) {
-            checks(table, &parquet_path, &actual, &mut problems);
-        }
-    }
+    compare_parquet(dict_path, &dict, table, &mut problems, checks);
     problems
 }
 
@@ -124,7 +146,7 @@ fn read_parquet(
 /// The tables to validate: the one named by `table`, or all of them. Records a
 /// `TableNotFound` pre-flight failure and returns `None` when a named table is
 /// absent.
-fn select_tables<'a>(
+pub(crate) fn select_tables<'a>(
     dict: &'a DataDict,
     table: Option<&str>,
     out: &mut ProblemSet,

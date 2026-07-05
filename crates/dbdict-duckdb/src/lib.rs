@@ -1,16 +1,26 @@
-//! DuckDB reader for dbdict.yaml validation.
+//! DuckDB backend for dbdict.yaml validation.
 //!
-//! Shells out to the `duckdb` CLI (must be on PATH) rather than linking a
-//! native library — see the design spec. Only column names and types are read
-//! (meta-level validation).
+//! The live path is [`native`]: it links the bundled `duckdb` library (no
+//! runtime `duckdb` on PATH) and drives the rich (0.2.0) round-trip —
+//! [`read_schema`] reads the real database, [`instantiate`] builds the dict's
+//! scratch schema, [`classify`] buckets canonical types, and [`NativeDuckdb`]
+//! wires them into the core `DuckdbBackend` seam.
+//!
+//! The rest of this file is the **transitional** shell-out reader (`describe`,
+//! `column_types`, [`DuckdbError`], [`DictType`], [`dict_type_for`]): it runs
+//! the `duckdb` CLI and maps types to the coarse legacy vocabulary. It has no
+//! production callers left — only its own tests — and is deleted in phase 4
+//! once the coarse mapping is fully retired.
 
 mod error;
+mod native;
 mod types;
 
 use std::path::Path;
 use std::process::Command;
 
 pub use error::DuckdbError;
+pub use native::{NativeDuckdb, classify, instantiate, read_schema};
 pub use types::{DictType, dict_type_for};
 
 /// Column type info for one column, as read from `DESCRIBE`.
@@ -62,7 +72,7 @@ pub fn column_types(file: &Path, table: &str) -> Result<Vec<(String, String)>, D
 }
 
 /// Double-quote a DuckDB identifier, escaping embedded quotes.
-fn quote_ident(name: &str) -> String {
+pub(crate) fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 

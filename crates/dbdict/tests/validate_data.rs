@@ -97,6 +97,44 @@ fn write_double_with_null(col: &mut SerializedColumnWriter) {
         .unwrap();
 }
 
+// A rich (0.2.0) document reaching the data level reports one honest
+// "not yet supported" pre-flight — the duckdb round-trip covers the metadata
+// level only so far. Goes away when the rich data level is built.
+#[test]
+fn rich_format_gets_unsupported_preflight() {
+    let dir = temp_dir();
+    let yaml = common::write_yaml(
+        &dir,
+        indoc! {"
+            $version: \"0.2.0\"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: trades
+                columns:
+                  - name: qty
+                    type: BIGINT
+        "},
+    );
+
+    let problems = validate_data(&yaml, None);
+    assert_eq!(problems.status(), Status::Error);
+    assert_eq!(problems.items.len(), 1, "got {:?}", problems.items);
+    let problem = &problems.items[0];
+    assert!(
+        matches!(problem.kind, ProblemKind::RichFormatUnsupported),
+        "got {:?}",
+        problem.kind
+    );
+    assert!(
+        problem.message.contains("not yet supported"),
+        "got {:?}",
+        problem.message
+    );
+}
+
 /// The defining difference between the two levels: a `required` column with
 /// nulls is a *value* problem, so it is invisible to `validate-meta` (which
 /// reads only names and types) but caught by `validate-data` (which scans).
@@ -114,7 +152,7 @@ fn meta_ignores_null_values_that_data_catches() {
     );
 
     // Metadata level: the column exists with a compatible type, so it's clean.
-    let meta = validate_meta(&yaml, None);
+    let meta = validate_meta(&yaml, None, &common::NoDuckdb);
     assert_eq!(meta.status(), Status::Ok, "meta got {:?}", meta.items);
 
     // Data level: the null in a required column is an error.

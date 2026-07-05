@@ -150,13 +150,28 @@ pub enum ProblemKind {
     ExtraInData { actual: String },
     /// `M04` — a table validated against data declares no `source`.
     MissingSource,
-    /// A rich (0.2.0) document reached the metadata/data level, which only
-    /// reads the legacy per-table parquet `source` so far. Transitional:
-    /// removed when the duckdb round-trip comparison is wired in.
+    /// A rich (0.2.0) document reached the *data* level, which is not built
+    /// for it yet (the duckdb round-trip covers spec and metadata).
+    /// Transitional: removed when the rich data level lands.
     RichFormatUnsupported,
     /// `M05` — a table's `source` is declared but its data can't be read (the
-    /// `parquet` file is absent or unreadable).
+    /// `parquet` file is absent or unreadable, or the duckdb database can't
+    /// be opened).
     UnreadableSource,
+    /// `M06` (rich format) — a table the dictionary describes is absent from
+    /// the database.
+    MissingTable,
+    /// `M07` (rich format) — a table present in the database that the
+    /// dictionary does not describe.
+    ExtraTable,
+    /// `M08` (rich format) — duckdb rejected a `typedef:` when the dictionary
+    /// was instantiated in the scratch database (unknown or cyclic reference,
+    /// malformed expression); duckdb's reason is in [`Problem::message`].
+    InvalidTypedef,
+    /// `M09` (rich format) — duckdb rejected a column's `type:` expression
+    /// when creating its scratch table; duckdb's reason is in
+    /// [`Problem::message`].
+    InvalidColumnType,
     /// `D01` — a `required` (or `primary_key`) column contains nulls. `rows`
     /// lists the first few offending row numbers (1-based); `count` is the total.
     NullsInRequired { count: usize, rows: Vec<usize> },
@@ -173,6 +188,10 @@ impl ProblemKind {
             ProblemKind::ExtraInData { .. } => "M03",
             ProblemKind::MissingSource => "M04",
             ProblemKind::UnreadableSource => "M05",
+            ProblemKind::MissingTable => "M06",
+            ProblemKind::ExtraTable => "M07",
+            ProblemKind::InvalidTypedef => "M08",
+            ProblemKind::InvalidColumnType => "M09",
             ProblemKind::NullsInRequired { .. } => "D01",
             _ => return None,
         })
@@ -187,7 +206,11 @@ impl ProblemKind {
             | ProblemKind::MissingInData
             | ProblemKind::ExtraInData { .. }
             | ProblemKind::MissingSource
-            | ProblemKind::UnreadableSource => Level::Meta,
+            | ProblemKind::UnreadableSource
+            | ProblemKind::MissingTable
+            | ProblemKind::ExtraTable
+            | ProblemKind::InvalidTypedef
+            | ProblemKind::InvalidColumnType => Level::Meta,
             ProblemKind::NullsInRequired { .. } => Level::Data,
             _ => return None,
         })
@@ -232,6 +255,31 @@ impl Problem {
             suggestion: None,
             context: Vec::new(),
             kind: ProblemKind::ExtraInData { actual },
+        }
+    }
+
+    /// An unlocated problem that still carries a rule code and an `expected`
+    /// statement — for findings with no YAML node to point at (a whole-dict
+    /// concern like M04, or a database-only object like M07). Unlike
+    /// [`preflight`](Self::preflight) the code comes from `kind`, and unlike
+    /// [`push_located`](ProblemSet::push_located) no span is required.
+    pub(crate) fn unlocated(
+        kind: ProblemKind,
+        severity: Severity,
+        expected: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        let code = kind.code().expect("an unlocated coded problem has a code");
+        Problem {
+            code: Some(code),
+            severity,
+            message: message.into(),
+            column: None,
+            expected: Some(expected.into()),
+            hint: None,
+            suggestion: None,
+            context: Vec::new(),
+            kind,
         }
     }
 

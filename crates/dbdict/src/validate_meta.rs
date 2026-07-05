@@ -22,14 +22,35 @@ pub(crate) enum CheckResult {
 /// Validate every table's column names and types against a data dictionary.
 ///
 /// Validates the spec first, then — when it is free of errors — compares each
-/// table's `source` data against its dictionary entry, reporting type
-/// mismatches, columns described but absent from the data, and columns in the
-/// data the dictionary does not describe. Values are never read; see
-/// [`crate::validate_data::validate_data`] for the level that does.
-pub fn validate_meta(dict_path: &Path, table: Option<&str>) -> ProblemSet {
-    crate::compare_dataset(dict_path, table, |table, _parquet, actual, problems| {
-        meta_issues(table, actual, problems);
-    })
+/// table against its data, reporting type mismatches, columns described but
+/// absent from the data, and columns in the data the dictionary does not
+/// describe. A legacy (0.1.0) dictionary is compared against its per-table
+/// parquet `source`s; a rich (0.2.0) one is round-tripped through `duckdb`
+/// against the database its dictionary-level `source` names. Values are never
+/// read; see [`crate::validate_data::validate_data`] for the level that does.
+pub fn validate_meta(
+    dict_path: &Path,
+    table: Option<&str>,
+    duckdb: &dyn crate::rich::DuckdbBackend,
+) -> ProblemSet {
+    let (mut problems, dict) = match crate::load_and_lower(dict_path) {
+        Ok(loaded) => loaded,
+        Err(problems) => return problems,
+    };
+    if dict.format == crate::model::Format::Rich {
+        crate::rich::check_meta(dict_path, &dict, table, duckdb, &mut problems);
+        return problems;
+    }
+    crate::compare_parquet(
+        dict_path,
+        &dict,
+        table,
+        &mut problems,
+        |table, _parquet, actual, problems| {
+            meta_issues(table, actual, problems);
+        },
+    );
+    problems
 }
 
 /// Compare the dictionary's `table` against the actual column types read from

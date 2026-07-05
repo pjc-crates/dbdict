@@ -901,10 +901,12 @@ fn validate_s12_value_types(table: &Table, col: &Column, out: &mut ProblemSet) -
     ok
 }
 
-fn is_infinite(value: &Scalar) -> bool {
+pub(crate) fn is_infinite(value: &Scalar) -> bool {
     matches!(value, Scalar::Number(f) if f.is_infinite())
 }
 
+// the rich (duckdb) path has a parallel of this keyed on `TypeCategory`
+// (rich::bound_matches_category / range_descending) — keep the two in step
 fn value_matches_type(type_name: &str, value: &Scalar, tz_present: bool) -> bool {
     match type_name {
         "number" | "number(id)" | "number(ordinal)" | "number(quantity)" => {
@@ -927,15 +929,15 @@ fn value_matches_type(type_name: &str, value: &Scalar, tz_present: bool) -> bool
     }
 }
 
-fn parse_date(s: &str) -> Option<NaiveDate> {
+pub(crate) fn parse_date(s: &str) -> Option<NaiveDate> {
     s.parse().ok()
 }
 
-fn parse_datetime(s: &str) -> Option<DateTime<FixedOffset>> {
+pub(crate) fn parse_datetime(s: &str) -> Option<DateTime<FixedOffset>> {
     DateTime::parse_from_rfc3339(s).ok()
 }
 
-fn parse_naive_datetime(s: &str) -> Option<NaiveDateTime> {
+pub(crate) fn parse_naive_datetime(s: &str) -> Option<NaiveDateTime> {
     s.parse().ok()
 }
 

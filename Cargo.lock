@@ -652,7 +652,10 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "dbdict",
+ "dbdict-duckdb",
  "dbdict-parquet",
+ "duckdb",
+ "indoc",
  "insta",
  "serde_json",
 ]
@@ -661,7 +664,10 @@ dependencies = [
 name = "dbdict-duckdb"
 version = "0.0.1"
 dependencies = [
+ "dbdict",
  "duckdb",
+ "indoc",
+ "quarto-source-map",
  "serde_json",
 ]
 

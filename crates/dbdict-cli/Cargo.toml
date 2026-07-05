@@ -13,8 +13,12 @@ path = "src/main.rs"
 [dependencies]
 dbdict.workspace = true
 dbdict-parquet.workspace = true
+dbdict-duckdb.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 insta = "1"
+indoc = "2"
+# the rich round-trip test writes a real duckdb database fixture
+duckdb.workspace = true

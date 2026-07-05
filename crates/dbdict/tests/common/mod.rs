@@ -65,6 +65,24 @@ pub fn write_parquet(path: &Path) {
     writer.close().unwrap();
 }
 
+/// The backend legacy-path tests pass to `validate_meta`: the legacy parquet
+/// comparison must never consult duckdb, so every method is unreachable.
+pub struct NoDuckdb;
+
+impl dbdict::rich::DuckdbBackend for NoDuckdb {
+    fn instantiate(&self, _dict: &dbdict::model::DataDict) -> dbdict::rich::Instantiated {
+        unreachable!("legacy validation must not instantiate a scratch database")
+    }
+
+    fn read_schema(&self, _db_file: &Path) -> Result<Vec<dbdict::rich::TableSchema>, String> {
+        unreachable!("legacy validation must not read a duckdb database")
+    }
+
+    fn classify(&self, _canonical_type: &str) -> dbdict::rich::TypeCategory {
+        unreachable!("legacy validation must not classify duckdb types")
+    }
+}
+
 /// Write `yaml` to `<dir>/dict.yaml` and return the path.
 pub fn write_yaml(dir: &Path, yaml: &str) -> PathBuf {
     let path = dir.join("dict.yaml");
@@ -159,6 +177,9 @@ pub fn diagnostic(path: &Path, rendered: &str) -> Diagnostic {
 /// together. The source lives in the snapshot body rather than metadata, so it
 /// is readable and self-maintaining: editing the YAML shows up as an ordinary
 /// snapshot diff. The redundant `expression:` header is omitted.
+// `allow(unused)`: each test binary compiles its own copy of this module,
+// and not every binary snapshots (rich_meta asserts on codes instead)
+#[allow(unused_macros)]
 macro_rules! assert_snapshot {
     ($diagnostic:expr) => {{
         let body = $diagnostic.body();
@@ -168,6 +189,7 @@ macro_rules! assert_snapshot {
         insta::assert_snapshot!(body);
     }};
 }
+#[allow(unused_imports)]
 pub(crate) use assert_snapshot;
 
 /// Remove ANSI SGR sequences (`ESC [ ... m`) and OSC-8 hyperlink wrappers

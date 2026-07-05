@@ -60,50 +60,12 @@ fn animals_dict(dir: &Path, parquet: &str, columns: &str) -> PathBuf {
     )
 }
 
-// A rich (0.2.0) document reaching the metadata level reports one honest
-// "not yet supported" pre-flight — not a misleading M04 per table telling the
-// user to add a per-table `source` the rich schema rejects. Goes away when
-// the duckdb round-trip is wired in.
-#[test]
-fn rich_format_gets_unsupported_preflight_not_m04() {
-    let dir = temp_dir();
-    let yaml = common::write_yaml(
-        &dir,
-        indoc! {"
-            $version: \"0.2.0\"
-            $learn_more: http://data-dict.tidyverse.org/
-            source:
-              duckdb:
-                file: warehouse.duckdb
-            tables:
-              - name: trades
-                columns:
-                  - name: qty
-                    type: BIGINT
-        "},
-    );
-
-    let problems = validate_meta(&yaml, None);
-    assert_eq!(problems.status(), Status::Error);
-    assert_eq!(problems.items.len(), 1, "got {:?}", problems.items);
-    let problem = &problems.items[0];
-    assert!(
-        problem.message.contains("not yet supported"),
-        "got {:?}",
-        problem.message
-    );
-    assert!(
-        !matches!(problem.kind, ProblemKind::MissingSource),
-        "a rich table must not report the legacy M04"
-    );
-}
-
 #[test]
 fn matching_dict_and_parquet() {
     let dir = dir_with_parquet();
     let yaml = animals_dict(&dir, "data.parquet", &format!("{NAME}{WEIGHT}"));
 
-    let problems = validate_meta(&yaml, None);
+    let problems = validate_meta(&yaml, None, &common::NoDuckdb);
     assert_eq!(problems.status(), Status::Ok, "got {:?}", problems.items);
 }
 
@@ -124,7 +86,7 @@ fn type_mismatch_reported() {
         ),
     );
 
-    let problems = validate_meta(&yaml, None);
+    let problems = validate_meta(&yaml, None, &common::NoDuckdb);
     assert_eq!(problems.status(), Status::Error);
     assert!(matches!(
         problems.items.as_slice(),
@@ -143,7 +105,7 @@ fn extra_column_in_data_is_warning() {
 
     // An undocumented column is a warning, not an error: it is reported but does
     // not fail validation.
-    let problems = validate_meta(&yaml, None);
+    let problems = validate_meta(&yaml, None, &common::NoDuckdb);
     assert_eq!(
         problems.status(),
         Status::Warning,
@@ -165,7 +127,7 @@ fn typeless_column_skips_type_check_for_present_column() {
     // is not checked; and because it is listed it is not flagged as undocumented.
     let yaml = animals_dict(&dir, "data.parquet", &format!("{NAME}- name: weight\n"));
 
-    let problems = validate_meta(&yaml, None);
+    let problems = validate_meta(&yaml, None, &common::NoDuckdb);
     assert_eq!(problems.status(), Status::Ok, "got {:?}", problems.items);
 }
 
@@ -180,7 +142,7 @@ fn typeless_column_still_must_exist_in_data() {
         &format!("{NAME}{WEIGHT}- name: height\n"),
     );
 
-    let problems = validate_meta(&yaml, None);
+    let problems = validate_meta(&yaml, None, &common::NoDuckdb);
     assert_eq!(problems.status(), Status::Error);
     assert!(matches!(
         problems.items.as_slice(),
@@ -208,7 +170,7 @@ fn missing_column_in_data_reported() {
         ),
     );
 
-    let problems = validate_meta(&yaml, None);
+    let problems = validate_meta(&yaml, None, &common::NoDuckdb);
     assert_eq!(problems.status(), Status::Error);
     assert!(matches!(
         problems.items.as_slice(),
@@ -258,7 +220,7 @@ fn validates_every_table() {
         "},
     );
 
-    let problems = validate_meta(&yaml, None);
+    let problems = validate_meta(&yaml, None, &common::NoDuckdb);
     assert_eq!(problems.status(), Status::Error);
     assert!(
         problems
@@ -276,7 +238,7 @@ fn unreadable_source_reported() {
     // The table declares a `source`, but the parquet file it names does not exist.
     let yaml = animals_dict(&dir, "missing.parquet", NAME);
 
-    let problems = validate_meta(&yaml, None);
+    let problems = validate_meta(&yaml, None, &common::NoDuckdb);
     assert_eq!(problems.status(), Status::Error);
     assert!(
         matches!(
@@ -326,7 +288,7 @@ fn unreadable_source_does_not_stop_other_tables() {
         "},
     );
 
-    let problems = validate_meta(&yaml, None);
+    let problems = validate_meta(&yaml, None, &common::NoDuckdb);
     assert_eq!(problems.status(), Status::Error);
     assert!(
         problems.items.iter().any(|p| p.code == Some("M05")),
@@ -347,7 +309,7 @@ fn unknown_table_name() {
     let dir = dir_with_parquet();
     let yaml = animals_dict(&dir, "data.parquet", &format!("{NAME}{WEIGHT}"));
 
-    let problems = validate_meta(&yaml, Some("nope"));
+    let problems = validate_meta(&yaml, Some("nope"), &common::NoDuckdb);
     assert!(
         matches!(
             problems.items.as_slice(),
@@ -380,7 +342,7 @@ fn missing_source_reported() {
         "},
     );
 
-    let problems = validate_meta(&yaml, None);
+    let problems = validate_meta(&yaml, None, &common::NoDuckdb);
     assert!(
         problems
             .items
