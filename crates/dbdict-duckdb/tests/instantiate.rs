@@ -5,6 +5,8 @@
 //! The `DataDict` fixtures are built by hand (with placeholder spans) rather
 //! than parsed from YAML — lowering is core's business, already covered by
 //! core's own tests; these tests pin the duckdb behaviour.
+//! (the builder helpers below are copied into tests/expand.rs — keep the two
+//! in step)
 
 use std::sync::atomic::{AtomicU32, Ordering};
 

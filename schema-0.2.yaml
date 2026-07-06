@@ -19,10 +19,11 @@
 #     spec when new fields are added.
 #   - The column subschema is a single flat object. The legacy coarse-type
 #     rules (S07/S08/S12–S14: `values` required for enums, `units` only on
-#     quantities, …) do NOT run for rich documents — they are written against
-#     the coarse vocabulary this format replaces, and their duckdb-type
-#     rework is pending. The descriptive keys (`values`/`range`/`examples`/
-#     `units`/`time_zone`) are kept as optional metadata meanwhile.
+#     quantities, …) do NOT run here for rich documents — their rich rework
+#     checks the *canonicalized* duckdb type, which needs the scratch
+#     database, so it runs at the metadata level instead (keeping the S
+#     codes; see site/validation.md). At this level the descriptive keys
+#     (`values`/`range`/`examples`/`units`/`time_zone`) are optional metadata.
 #   - Cross-table / cross-field semantics (foreign-key targets really exist,
 #     `join` expressions parse, `conflicts` columns appear in both sides) are
 #     out of scope for the schema and belong in a separate validator.

@@ -35,6 +35,6 @@ model — they never touch YAML or each other.
 
 ## Build / test
 - `cargo build --workspace` / `cargo test --workspace`
-- DuckDB is bundled (native, v1.5.4) — no runtime `duckdb` on PATH needed by the
-  library. Some transitional shell-out tests still call the `duckdb` CLI; those go
-  away when the duckdb reader is reworked onto the native crate.
+- DuckDB is bundled (native, v1.5.4) — everything runs in-process; no runtime
+  `duckdb` on PATH is needed by the library, the CLI, or the tests. The first
+  build compiles the bundled DuckDB (multi-minute); later builds are cached.

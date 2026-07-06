@@ -64,22 +64,10 @@ fn instantiate_table(
 ) -> Vec<(String, String)> {
     let conn = open_scratch();
 
-    // effective typedefs: globals not shadowed by a table-scoped name, then
-    // the table's own. each is tagged with `Some(scoped_index)` when it is a
-    // table-scoped typedef, or `None` for an unshadowed global — a global's
-    // failures were already reported by stage 1 (a global can also fail *here*
-    // when it compounds on a broken scoped typedef; the scoped report is the
-    // root cause, so this echo is dropped)
-    let shadowed = |name: &str| -> bool { table.typedefs.iter().any(|td| td.name.value == name) };
-    let mut effective: Vec<(Option<usize>, &Typedef)> = Vec::new();
-    for td in globals {
-        if !shadowed(&td.name.value) {
-            effective.push((None, td));
-        }
-    }
-    for (scoped_index, td) in table.typedefs.iter().enumerate() {
-        effective.push((Some(scoped_index), td));
-    }
+    // a global's failures were already reported by stage 1 (a global can also
+    // fail *here* when it compounds on a broken scoped typedef; the scoped
+    // report is the root cause, so this echo is dropped)
+    let effective = effective_typedefs(table, globals);
     // create_types_fixpoint borrows the typedefs, so collect the refs (no clone)
     let refs: Vec<&Typedef> = effective.iter().map(|(_, td)| *td).collect();
     for (position, error) in create_types_fixpoint(&conn, &refs) {
@@ -92,40 +80,160 @@ fn instantiate_table(
         }
     }
 
-    // probe each typed column as a single-column table: DESCRIBE canonicalizes
-    // per column, so the probes' rows assemble into the table's expected side
+    // probe each typed column on its own: DESCRIBE canonicalizes per column,
+    // so the probes' results assemble into the table's expected side, and one
+    // bad column type spares its neighbours
     let mut columns = Vec::new();
     for (column_index, column) in table.columns.iter().enumerate() {
         let Some(col_type) = &column.col_type else {
             continue; // untyped: makes no type claim
         };
-        let mut fail = |error: String| {
-            failures.push(InstantiateFailure::Column {
+        match probe_type(&conn, &col_type.value) {
+            Ok(canonical) => columns.push((column.name.value.clone(), canonical)),
+            Err(error) => failures.push(InstantiateFailure::Column {
                 table: table_index,
                 column: column_index,
                 error,
-            });
-        };
-        let sql = format!(
-            "CREATE OR REPLACE TABLE probe ({} {})",
-            crate::quote_ident(&column.name.value),
-            col_type.value
-        );
-        if let Err(e) = conn.execute(&sql, []) {
-            fail(e.to_string());
-            continue;
-        }
-        match describe(&conn, "probe") {
-            // exactly one row is the norm; more than one means the type
-            // expression smuggled extra columns (a top-level comma), so its
-            // canonical form is not trustworthy — reject rather than let the
-            // phantom columns leak into the expected side
-            Ok(described) if described.len() == 1 => columns.extend(described),
-            Ok(_) => fail("type expression must describe a single column".to_string()),
-            Err(error) => fail(error),
+            }),
         }
     }
     columns
+}
+
+/// A table's effective typedefs: the globals not shadowed by a same-named
+/// table-scoped typedef, then the table's own. Each entry is tagged with
+/// `Some(scoped_index)` (its position in `table.typedefs`) when it is
+/// table-scoped, or `None` for an unshadowed global.
+fn effective_typedefs<'a>(
+    table: &'a Table,
+    globals: &'a [Typedef],
+) -> Vec<(Option<usize>, &'a Typedef)> {
+    let shadowed = |name: &str| -> bool { table.typedefs.iter().any(|td| td.name.value == name) };
+    let mut effective: Vec<(Option<usize>, &'a Typedef)> = Vec::new();
+    for td in globals {
+        if !shadowed(&td.name.value) {
+            effective.push((None, td));
+        }
+    }
+    for (scoped_index, td) in table.typedefs.iter().enumerate() {
+        effective.push((Some(scoped_index), td));
+    }
+    effective
+}
+
+/// Create a single-column `probe` table with the given type expression and
+/// DESCRIBE it back: duckdb's canonical spelling of that type. Exactly one
+/// DESCRIBE row is required — more means the expression smuggled extra
+/// columns past us (a top-level comma). This guard is a tripwire, not a
+/// boundary: a crafted multi-*statement* expression can still shape its own
+/// probe result — but that only lets a dictionary lie about its own expected
+/// side, which it controls anyway; the real safety basis is `open_scratch`
+/// (throwaway in-memory database, external access off).
+fn probe_type(conn: &Connection, type_expr: &str) -> Result<String, String> {
+    let sql = format!("CREATE OR REPLACE TABLE probe (x {type_expr})");
+    conn.execute(&sql, []).map_err(|e| e.to_string())?;
+    let described = describe(conn, "probe")?;
+    // slice patterns make "exactly one" explicit: match a one-element slice,
+    // binding its fields, and reject every other shape
+    match described.as_slice() {
+        [(_, canonical)] => Ok(canonical.clone()),
+        _ => Err("type expression must describe a single column".to_string()),
+    }
+}
+
+/// One typedef's canonical expansion, as the `resolve` CLI command prints it.
+#[derive(Debug, Clone)]
+pub struct TypedefExpansion {
+    /// `None` for a global typedef. `Some(table)` for a table-scoped typedef —
+    /// and also for a *global* whose expansion changes inside that table
+    /// (because a scoped typedef shadows one of its dependencies)
+    pub table: Option<String>,
+    /// the alias name, as written in the dictionary
+    pub name: String,
+    /// the declared type expression, as written
+    pub expr: String,
+    /// duckdb's canonical spelling, or duckdb's error when the alias is
+    /// unknown, cyclic, or malformed
+    pub expansion: Result<String, String>,
+}
+
+/// Expand every typedef to its canonical duckdb spelling: the globals first,
+/// then per table anything whose expansion is specific to that table, all in
+/// document order. Same scratch mechanics as [`instantiate`] — create the
+/// types by fixpoint, then probe each alias as a single-column table and
+/// DESCRIBE the canonical type back.
+///
+/// A table's entries are its scoped typedefs plus any global whose expansion
+/// *differs* in the table's context — a scoped typedef can shadow a
+/// dependency of a global (`a: intish` globally, table redefines `intish`),
+/// and validation instantiates that table with the reshaped `a`, so the
+/// output must say so too or it would contradict `validate-meta`.
+pub fn expand_typedefs(dict: &DataDict) -> Vec<TypedefExpansion> {
+    let mut out = Vec::new();
+
+    let conn = open_scratch();
+    let global_refs: Vec<&Typedef> = dict.typedefs.iter().collect();
+    let stalled = create_types_fixpoint(&conn, &global_refs);
+    for (position, td) in dict.typedefs.iter().enumerate() {
+        out.push(TypedefExpansion {
+            table: None,
+            name: td.name.value.clone(),
+            expr: td.expr.value.clone(),
+            expansion: expansion_result(&conn, td, &stalled, position),
+        });
+    }
+
+    for table in &dict.tables {
+        if table.typedefs.is_empty() {
+            continue; // effective typedefs == the globals: nothing table-specific
+        }
+        // fresh connection with the table's effective typedefs, so everything
+        // expands in *this* table's context — exactly how instantiation sees it
+        let conn = open_scratch();
+        let effective = effective_typedefs(table, &dict.typedefs);
+        let refs: Vec<&Typedef> = effective.iter().map(|(_, td)| *td).collect();
+        let stalled = create_types_fixpoint(&conn, &refs);
+        for (position, (scoped, td)) in effective.iter().enumerate() {
+            let expansion = expansion_result(&conn, td, &stalled, position);
+            // an unshadowed global is an echo of the global pass unless this
+            // table's scoped typedefs changed what it expands to
+            if scoped.is_none() {
+                let same_as_global = out.iter().any(|e| {
+                    e.table.is_none() && e.name == td.name.value && e.expansion == expansion
+                });
+                if same_as_global {
+                    continue;
+                }
+            }
+            out.push(TypedefExpansion {
+                table: Some(table.name.value.clone()),
+                name: td.name.value.clone(),
+                expr: td.expr.value.clone(),
+                expansion,
+            });
+        }
+    }
+    out
+}
+
+/// One typedef's expansion outcome: the fixpoint's error if it stalled,
+/// otherwise the canonical type probed from its alias.
+///
+/// `position` is this typedef's index in the exact slice handed to
+/// [`create_types_fixpoint`] — stalled entries are keyed by that position, so
+/// both must come from the same enumerate over the same slice.
+fn expansion_result(
+    conn: &Connection,
+    td: &Typedef,
+    stalled: &[(usize, String)],
+    position: usize,
+) -> Result<String, String> {
+    match stalled.iter().find(|(i, _)| *i == position) {
+        Some((_, error)) => Err(error.clone()),
+        // the alias name is quoted like any identifier, so an odd name is
+        // never read as SQL syntax in type position
+        None => probe_type(conn, &quote_ident(&td.name.value)),
+    }
 }
 
 /// The native backend: what the CLI hands to `dbdict::validate_meta`. A unit
@@ -200,7 +308,7 @@ fn create_types_fixpoint(conn: &Connection, typedefs: &[&Typedef]) -> Vec<(usize
             let td = typedefs[index];
             let sql = format!(
                 "CREATE TYPE {} AS {}",
-                crate::quote_ident(&td.name.value),
+                quote_ident(&td.name.value),
                 td.expr.value
             );
             if let Err(e) = conn.execute(&sql, []) {
@@ -237,6 +345,12 @@ pub fn read_schema(db_file: &Path) -> Result<Vec<TableSchema>, String> {
     Ok(schema)
 }
 
+/// Double-quote a DuckDB identifier, escaping embedded quotes, so a name (or
+/// a typedef alias used as a type) is never parsed as SQL syntax.
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
 /// Every user relation in the database's `main` schema, alphabetically.
 /// `information_schema.tables` covers base tables and views but not duckdb's
 /// internal catalogs.
@@ -258,7 +372,7 @@ fn relation_names(conn: &Connection) -> Result<Vec<String>, String> {
 /// order. Shared by the real side here and the scratch side.
 pub(crate) fn describe(conn: &Connection, table: &str) -> Result<Vec<(String, String)>, String> {
     let mut stmt = conn
-        .prepare(&format!("DESCRIBE {}", crate::quote_ident(table)))
+        .prepare(&format!("DESCRIBE {}", quote_ident(table)))
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -267,4 +381,16 @@ pub(crate) fn describe(conn: &Connection, table: &str) -> Result<Vec<(String, St
         .map_err(|e| e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quotes_and_escapes_identifiers() {
+        assert_eq!(quote_ident("food"), "\"food\"");
+        // an embedded double-quote is doubled
+        assert_eq!(quote_ident("we\"ird"), "\"we\"\"ird\"");
+    }
 }

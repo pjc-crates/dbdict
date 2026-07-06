@@ -4,17 +4,17 @@
 
 Validation happens at three levels, each a strict superset of the one before it:
 
-* Validating the **spec** checks that the dictionary file itself conforms to the data-dict spec — that it is well-formed and internally consistent, with valid types, foreign keys that have matching relationships, joins that parse, and so on. These checks have an unambiguous right answer, so most are errors. This level looks only at the `data-dict.yaml` file, never at the data. This is performed by `data-dict validate-spec`.
+* Validating the **spec** checks that the dictionary file itself conforms to the dbdict spec — that it is well-formed and internally consistent, with valid types, foreign keys that have matching relationships, joins that parse, and so on. These checks have an unambiguous right answer, so most are errors. This level looks only at the dictionary file, never at the data. This is performed by `dbdict validate-spec`.
 
-* Validating the **metadata** checks that the data's column names and types match the dictionary. It reads only the data's metadata (for example, a Parquet file's footer), not its values, so it stays cheap. This is performed by `data-dict validate-meta`.
+* Validating the **metadata** checks that the data's column names and types match the dictionary. It reads only the data's metadata (for example, a Parquet file's footer), not its values, so it stays cheap. This is performed by `dbdict validate-meta`.
 
-* Validating the **data** checks that the data's values match the dictionary — that required columns have no nulls, and so on. This is the only level that reads the data itself, so it can be expensive, depending on the data source. This is performed by `data-dict validate-data`.
+* Validating the **data** checks that the data's values match the dictionary — that required columns have no nulls, and so on. This is the only level that reads the data itself, so it can be expensive, depending on the data source. This is performed by `dbdict validate-data`.
 
 The last two levels compare the dictionary against the data (or equivalently, the data against the dictionary). When they disagree, we can't tell which side needs to change. If you're creating the dictionary as you learn about the data, then you might need to change the dictionary. If you're using the dictionary to validate a dataset, there might be an upstream issue that you need to resolve.
 
 The metadata and data levels locate each table's data through its [`source`](spec.md#source). In the legacy (0.1.0) format they read the file each table's `source.parquet` points at, resolved relative to the dictionary file. In the rich (0.2.0) format the whole dictionary describes one DuckDB database, named by the dictionary-level `source.duckdb.file` (also resolved relative to the dictionary): `validate-meta` instantiates each typed column in a scratch in-memory DuckDB (applying the dictionary's `typedef:` aliases), `DESCRIBE`s both the scratch columns and the real database, and compares the canonical types exactly. Identifiers are matched case-insensitively, as DuckDB's are. Either way, every table in the dictionary is validated in a single run, and a problem in one table is reported against that table without stopping the others from being checked. (The rich format's *data* level is not built yet; `validate-data` on a rich dictionary reports one "not yet supported" pre-flight failure.)
 
-Each level implies the ones before it: validating the metadata validates the spec first, and validating the data validates both the spec and the metadata first. Validating the spec and metadata are cheap, so they can be run continually while you edit the `data-dict.yaml`; validating the data adds a full scan and get more expensive as the size of the data increases.
+Each level implies the ones before it: validating the metadata validates the spec first, and validating the data validates both the spec and the metadata first. Validating the spec and metadata are cheap, so they can be run continually while you edit the dictionary; validating the data adds a full scan and get more expensive as the size of the data increases.
 
 Each check has a code prefixed by its level: spec checks are `S01`, `S02`, …; metadata checks `M01`, …; data checks `D01`, …. Severity is independent of level — any level can raise errors or warnings.
 

@@ -19,6 +19,8 @@ enum Command {
     ValidateMeta(ValidateArgs),
     /// Validate a dataset's values against a data dictionary
     ValidateData(ValidateArgs),
+    /// Print each typedef's canonical DuckDB expansion [default: .]
+    Resolve { dict: Option<PathBuf> },
     /// Print the dbdict.yaml specification
     Spec,
     /// Inspect data types of a data source
@@ -60,6 +62,8 @@ const WRITE_SKILL: &str = include_str!("../skills/write-data-dict.md");
 enum TypesCommand {
     /// Print column types for a parquet file
     Parquet { path: PathBuf },
+    /// Print every table's column types from a DuckDB database
+    Duckdb { path: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -92,6 +96,7 @@ fn main() -> ExitCode {
             dbdict::validate_meta(path, table, &dbdict_duckdb::NativeDuckdb)
         }),
         Command::ValidateData(args) => run_validate(args, dbdict::validate_data),
+        Command::Resolve { dict } => run_resolve(dict),
         Command::Spec => {
             print!("{}", dbdict::SPEC_MD);
             ExitCode::SUCCESS
@@ -101,6 +106,18 @@ fn main() -> ExitCode {
         } => match dbdict_parquet::column_type_info(&path) {
             Ok(cols) => {
                 print_types_table(&cols);
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("{err}");
+                ExitCode::FAILURE
+            }
+        },
+        Command::Types {
+            command: TypesCommand::Duckdb { path },
+        } => match dbdict_duckdb::read_schema(&path) {
+            Ok(schema) => {
+                print_duckdb_schema(&schema);
                 ExitCode::SUCCESS
             }
             Err(err) => {
@@ -215,6 +232,128 @@ fn run_validate(
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// Run `resolve`: load and lower the dictionary, expand every typedef in a
+/// scratch DuckDB, and print the canonical expansions. Fails when the
+/// dictionary itself fails spec validation, or when any typedef won't expand
+/// (unknown, cyclic, or malformed — DuckDB's own error is printed inline).
+fn run_resolve(dict: Option<PathBuf>) -> ExitCode {
+    let dict_path = match resolve_dict_path(dict) {
+        Ok(dict_path) => dict_path,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match dbdict::load_and_lower(&dict_path) {
+        Err(problems) => {
+            for line in problems.render() {
+                eprintln!("{line}");
+            }
+            ExitCode::FAILURE
+        }
+        Ok((problems, dict)) => {
+            // an Ok load can still carry warnings — keep them visible
+            for line in problems.render() {
+                eprintln!("{line}");
+            }
+            let expansions = dbdict_duckdb::expand_typedefs(&dict);
+            print_typedef_expansions(&expansions);
+            if expansions.iter().any(|e| e.expansion.is_err()) {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
+        }
+    }
+}
+
+/// Print typedef expansions as `name  declared-expression  → canonical`: the
+/// globals first, then each table's entries under a `table <name>:` heading.
+/// `expand_typedefs` returns them already in that order.
+fn print_typedef_expansions(expansions: &[dbdict_duckdb::TypedefExpansion]) {
+    if expansions.is_empty() {
+        println!("(no typedefs)");
+        return;
+    }
+    // one width across all groups: simpler than a per-group pass, at the
+    // cost of some padding when one group's names run long
+    let name_width = expansions.iter().map(|e| e.name.len()).max().unwrap_or(0);
+    let expr_width = expansions.iter().map(|e| e.expr.len()).max().unwrap_or(0);
+    let mut printed_any = false;
+    let mut current_table: Option<&str> = None;
+    for e in expansions {
+        // a let-chain: the heading prints once per table, when its first
+        // entry arrives (globals have no table and no heading)
+        if let Some(table) = e.table.as_deref()
+            && current_table != Some(table)
+        {
+            current_table = Some(table);
+            if printed_any {
+                println!(); // separator, only when a group came before
+            }
+            println!("table {table}:");
+        }
+        let indent = if e.table.is_some() { "  " } else { "" };
+        match &e.expansion {
+            Ok(canonical) => println!(
+                "{indent}{:<name_width$}  {:<expr_width$}  → {canonical}",
+                e.name, e.expr
+            ),
+            Err(error) => println!(
+                "{indent}{:<name_width$}  {:<expr_width$}  → error: {error}",
+                e.name, e.expr
+            ),
+        }
+        printed_any = true;
+    }
+}
+
+/// Print a DuckDB database's schema: every table or view with its columns'
+/// canonical types.
+fn print_duckdb_schema(schema: &[dbdict::rich::TableSchema]) {
+    if schema.is_empty() {
+        println!("(no tables or views)");
+        return;
+    }
+    let mut first = true;
+    for table in schema {
+        if !first {
+            println!();
+        }
+        first = false;
+        println!("{}", table.name);
+        let headers = ["#", "column", "type"];
+        let num_width = table.columns.len().to_string().len().max(headers[0].len());
+        let name_width = table
+            .columns
+            .iter()
+            .map(|(name, _)| name.len())
+            .max()
+            .unwrap_or(0)
+            .max(headers[1].len());
+        let type_width = table
+            .columns
+            .iter()
+            .map(|(_, column_type)| column_type.len())
+            .max()
+            .unwrap_or(0)
+            .max(headers[2].len());
+        println!(
+            "  {:<num_width$}  {:<name_width$}  {}",
+            headers[0], headers[1], headers[2]
+        );
+        // a rule under the header row, matching the parquet printer's style
+        println!("  {}", "─".repeat(num_width + name_width + type_width + 4));
+        for (i, (name, column_type)) in table.columns.iter().enumerate() {
+            println!(
+                "  {:<num_width$}  {:<name_width$}  {column_type}",
+                i + 1,
+                name
+            );
+        }
     }
 }
 

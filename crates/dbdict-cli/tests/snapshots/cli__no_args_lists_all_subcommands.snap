@@ -8,8 +8,10 @@ Commands:
   validate-spec  Validate a dbdict.yaml file or directory against the spec [default: .]
   validate-meta  Validate a dataset's column names and types against a data dictionary
   validate-data  Validate a dataset's values against a data dictionary
+  resolve        Print each typedef's canonical DuckDB expansion [default: .]
   spec           Print the dbdict.yaml specification
   types parquet  Print column types for a parquet file
+  types duckdb   Print every table's column types from a DuckDB database
   skill read     Skill for reading and understanding a data dictionary
   skill write    Skill for creating or updating a data dictionary
   help           Print this message or the help of the given subcommand(s)

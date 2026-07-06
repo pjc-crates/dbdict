@@ -1,211 +1,372 @@
-# data-dict.yaml
+# dbdict.yaml
 
-This document describes version **0.1.0** of the `data-dict.yaml` specification.
+This document specifies the `dbdict.yaml` data dictionary format. There are two
+versions of the spec, selected by the required `$version` key:
 
-A data dictionary has three kinds of top-level keys. `$`-prefixed metadata keys that describe the dictionary itself, descriptive keys that name and describe the dataset as a whole, and content keys that describe the data. The `$` prefix marks a key as meta, distinguishes it from content, and keeps these keys grouped at the top of the file.
+* **`0.2.0` (rich)** — the current format, described first in this document.
+  Columns are typed in DuckDB's own type system — `STRUCT`, `ENUM`, `LIST`,
+  arrays, `DECIMAL(p,s)`, and so on — with a `typedef:` alias layer for naming
+  and reusing types. One dictionary describes one DuckDB database, and
+  validation compares declared types against the database with full fidelity.
+* **`0.1.0` (legacy)** — the original `data-dict.yaml` format: coarse semantic
+  types (`number`, `string`, …) validated against per-table Parquet files. It
+  is preserved so existing files keep validating; see
+  [The legacy format](#the-legacy-format-010) for where it differs.
+
+The CLI looks for a `dbdict.yaml` in the target directory, falling back to the
+legacy file name `data-dict.yaml`. The *format* is chosen by `$version` alone,
+not by the file name.
+
+A data dictionary has three kinds of top-level keys. `$`-prefixed metadata keys
+that describe the dictionary itself, descriptive keys that name and describe
+the dataset as a whole, and content keys that describe the data. The `$` prefix
+marks a key as meta, distinguishes it from content, and keeps these keys
+grouped at the top of the file.
 
 The metadata keys are:
 
-* `$version` (required): the version of the `data-dict.yaml` spec the document conforms to. Currently `0.1.0`. While the spec is pre-1.0, breaking changes are expected, but once the spec stabilises at 1.0, breaking changes will always increment at least the minor version.
-* `$learn_more` (optional, but recommended): a URL where readers can learn about the `data-dict.yaml` format, so that people and tools meeting the file for the first time can find out what it is. Use <http://data-dict.tidyverse.org/>. Omitting it is valid, but a validator will emit a warning rather than an error (see [Validation](validation.md)).
+* `$version` (required): the version of the spec the document conforms to —
+  `0.2.0` for the rich format, `0.1.0` for the legacy format. While the spec is
+  pre-1.0, breaking changes are expected, but once the spec stabilises at 1.0,
+  breaking changes will always increment at least the minor version.
+* `$learn_more` (optional, but recommended): a URL where readers can learn
+  about the format, so that people and tools meeting the file for the first
+  time can find out what it is. Use <http://data-dict.tidyverse.org/>. Omitting
+  it is valid, but a validator will emit a warning rather than an error (see
+  [Validation](validation.md)).
 
 The descriptive keys identify and document the dataset as a whole:
 
-* `name` (optional): a human-readable name for the dataset, suitable for display in a user interface that lists several dictionaries. Unlike a table name, it has no uniqueness or character constraints — it's a title, not an identifier.
-* `description` (optional): a short, human-readable description of the dataset. May contain markdown, and is usually a few sentences or a paragraph.
-* `details` (optional): additional information about the dataset. Can be any length.
+* `name` (optional): a human-readable name for the dataset, suitable for
+  display in a user interface that lists several dictionaries. Unlike a table
+  name, it has no uniqueness or character constraints — it's a title, not an
+  identifier.
+* `description` (optional): a short, human-readable description of the dataset.
+  May contain markdown, and is usually a few sentences or a paragraph.
+* `details` (optional): additional information about the dataset. Can be any
+  length.
 
-In the common case of a dictionary that describes a single table, these top-level keys should be used to describe the dataset, leaving the table itself undescribed.
+In the common case of a dictionary that describes a single table, these
+top-level keys should be used to describe the dataset, leaving the table itself
+undescribed.
 
 The content keys all hold the actual information about the data:
 
-* [`tables`](#tables) is where the bulk of most data-dict.yaml files will be. It describes the tables and their columns.
-* [`relationships`](#relationships) describes the relationships between tables. It gives the details you need to safely create joins.
-* [`glossary`](#glossary) provides a place to define important domain-specific terms. This is a good place to write down those special words that your company loves to use.
-* [`version`](#version) records the version of the data the dictionary describes — a version number, a date, or an opaque hash.
+* [`typedef`](#typedefs) names reusable DuckDB type expressions that column
+  `type:`s (and other typedefs) can refer to.
+* [`source`](#source) names the DuckDB database the dictionary describes.
+* [`tables`](#tables) is where the bulk of most dictionaries will be. It
+  describes the tables and their columns.
+* [`relationships`](#relationships) describes the relationships between tables.
+  It gives the details you need to safely create joins.
+* [`glossary`](#glossary) provides a place to define important domain-specific
+  terms. This is a good place to write down those special words that your
+  company loves to use.
+* [`version`](#version) records the version of the data the dictionary
+  describes — a version number, a date, or an opaque hash.
 
-`name`, `description`, and `details` form a consistent trio that recurs at every level of the dictionary: the dataset as a whole (here), each [table](#tables), and each [column](#columns). `description` and `details` are always optional and mean the same thing at every level — a short summary and a longer free-text note.
+`name`, `description`, and `details` form a consistent trio that recurs at
+every level of the dictionary: the dataset as a whole (here), each
+[table](#tables), and each [column](#columns). `description` and `details` are
+always optional and mean the same thing at every level — a short summary and a
+longer free-text note.
+
+## Typedefs
+
+`typedef` is a map from alias name to a native DuckDB type expression. An alias
+gives a domain name to a type you use repeatedly, so the dictionary reads in
+the domain's vocabulary and a change to the underlying type is made in one
+place:
+
+```yaml
+typedef:
+  money: DECIMAL(18, 4)
+  address: STRUCT(city VARCHAR, postcode INTEGER)
+  price_history: money[]
+```
+
+* The expression is DuckDB SQL, exactly as you would write it in a
+  `CREATE TABLE` — copy-pasteable in both directions.
+* Aliases **compound**: an alias may appear inside another alias's expression
+  (`price_history` above). Declaration order does not matter.
+* A table may declare its own `typedef` map (see [Tables](#tables)); a
+  table-scoped alias **shadows** a global alias of the same name for that
+  table's columns.
+
+Alias expansion is delegated to DuckDB itself: validation instantiates each
+typedef with [`CREATE TYPE`](https://duckdb.org/docs/current/sql/statements/create_type.html)
+in a scratch in-memory database, so exactly what DuckDB accepts is what the
+dictionary accepts. A typedef DuckDB rejects — an unknown or cyclic reference,
+or a malformed expression — is reported with DuckDB's own error at the
+typedef's definition (see M08 in [Validation](validation.md)). Run
+`dbdict resolve` to print every alias's canonical expansion.
+
+## Source
+
+`source` names the data the dictionary describes: one dictionary describes one
+DuckDB database.
+
+```yaml
+source:
+  duckdb:
+    file: warehouse.duckdb
+```
+
+* `duckdb.file`: path to a DuckDB database file. A relative path is resolved
+  relative to the dictionary file; an absolute path is used as-is.
+
+Each table in the dictionary is matched to the database relation with the same
+name — either a table or a view. Names are matched case-insensitively (ASCII
+folding), as DuckDB identifiers are. The database is always opened read-only:
+validation never creates, mutates, or locks it for writing.
+
+`source` is optional while you're only validating the spec, letting you sketch
+a dictionary before its database exists. But the metadata level validates the
+dictionary against the real database, so it requires a `source` naming a
+readable database.
 
 ## Tables
 
-`tables` is a list that describes each table in the dataset. Each table represents a rectangle of data with observations in the rows and variables in the columns. Each table has the following properties:
+`tables` is a list that describes each table in the dataset. Each table
+represents a rectangle of data with observations in the rows and variables in
+the columns. Each table has the following properties:
 
-* `name` (required): the table's name. Used to match the table to the underlying data and to refer to it from `relationships`. Must be non-empty and unique within the dictionary.
-* `description`: a human-readable description of the table. May contain markdown, and is usually a few sentences or a paragraph. A good description answers two questions:
-    * **What's the grain?** What does a row represent? (e.g. "each row is a food item", "each row is one patient visit").
-    * **What's the population?** What's been included or filtered out to produce this dataset? (e.g. "only completed orders from 2020 onwards", "excludes test accounts").
-* `details`: additional information about the table. This is the place for "here be dragons": assumptions baked into the data, known weak spots, surprising calculations, and known problems. Also covers how the data was collected or constructed. Can be any length.
-* `source`: ways to access the data. Optional at the spec level, so you can draft a dictionary before its data exists, but required to validate against data (see [Validation](validation.md)).
+* `name` (required): the table's name. Used to match the table to the database
+  relation of the same name and to refer to it from `relationships`. Must be
+  non-empty and unique within the dictionary.
+* `label`: an optional human-facing display name, free of the identifier
+  constraints on `name`.
+* `description`: a human-readable description of the table. May contain
+  markdown, and is usually a few sentences or a paragraph. A good description
+  answers two questions:
+    * **What's the grain?** What does a row represent? (e.g. "each row is a
+      food item", "each row is one patient visit").
+    * **What's the population?** What's been included or filtered out to
+      produce this dataset? (e.g. "only completed orders from 2020 onwards",
+      "excludes test accounts").
+* `details`: additional information about the table. This is the place for
+  "here be dragons": assumptions baked into the data, known weak spots,
+  surprising calculations, and known problems. Also covers how the data was
+  collected or constructed. Can be any length.
+* `typedef`: table-scoped type aliases, same shape as the top-level
+  [`typedef`](#typedefs). A name here shadows the same global name for this
+  table's columns.
 * `columns` (required): an ordered list of column metadata.
 
 For example:
 
 ```yaml
 tables:
-  - name: food
+  - name: trades
     description: >
-      Each row is a food item in the USDA FoodData Central database.
-      Includes both branded and foundation foods.
-    source:
-      parquet: inst/parquet/food.parquet
+      Each row is one executed trade. Includes all venues;
+      excludes cancelled and test orders.
+    typedef:
+      side: ENUM('buy', 'sell')
     columns:
-      - name: fdc_id
-        type: number(id)
+      - name: trade_id
+        type: BIGINT
         constraints: [primary_key]
-        description: Unique identifier for the food item.
-        examples: [167512, 174231, 325871, 534109, 715322]
-      - name: description
-        type: string
-        constraints: [required]
-        description: Full text description of the food.
-        examples: [Hummus, Egg rolls, Cheese spread, Grapes, Pickle relish]
-      - name: food_category_id
-        type: number(id)
-        constraints: [foreign_key]
-        description: Links to the food_category table.
-        examples: [9, 11, 14, 18, 25]
-      - name: data_type
-        type: enum
-        values: [foundation, branded]
-        description: Whether the food is a foundation or branded food.
+        description: Unique identifier for the trade.
+      - name: side
+        type: side
+        description: Whether the trade bought or sold the instrument.
+      - name: price
+        type: money
+        units: USD
+        description: Execution price.
+      - name: executed_at
+        type: TIMESTAMP WITH TIME ZONE
+        description: When the trade executed.
 ```
-
-### Source
-
-`source` describes how to access the table's data. It's a map whose keys describe the access method and whose values give the location. Currently the only supported key is `parquet`:
-
-```yaml
-source:
-  parquet: inst/parquet/food.parquet
-```
-
-* `parquet`: path to a Parquet file (may include globs). Relative paths are resolved relative to the dictionary file.
-
-Parquet is the only source `data-dict` can currently validate against, so it's the only one the spec defines. We expect to add more access methods in the future — most importantly `SQL` (a schema-qualified table name such as `foodbank.food`, or a full `SELECT` query), and likely others such as R, Python, and Posit Connect pins.
-
-`source` is optional while you're only validating the spec, letting you sketch a table before its data exists. But the metadata and data levels validate the dictionary against real data, so every table they check must declare a `source` whose file exists and is readable.
 
 ### Columns
 
-Each entry in the `columns` list is a column descriptor. Columns are matched to the underlying data by `name`, so the order in which you list them does not need to match the column order in the data.
+Each entry in the `columns` list is a column descriptor. Columns are matched to
+the database by `name`, so the order in which you list them does not need to
+match the column order in the data.
 
 Each descriptor has the following properties:
 
-* `name` (required): column name. Used to match the descriptor to a column in the underlying data. Must be non-empty and unique within a table.
-* `type`: the column's data type (see [Types](#types)). Should match (approximately) the underlying data type. Optional — see below.
-* `constraints`: a list of column-level constraints (see [Column constraints](#column-constraints)).
-* `display`: controls whether the column should appear in user-facing output (see [Display](#display)).
+* `name` (required): column name. Used to match the descriptor to a column in
+  the database (case-insensitively, like table names — ASCII folding). Must be
+  non-empty and unique within a table.
+* `label`: an optional human-facing display name.
+* `type`: the column's data type — a native DuckDB type expression or the name
+  of a `typedef` alias (see [Types](#types)). Optional — see below.
+* `constraints`: a list of column-level constraints (see
+  [Column constraints](#column-constraints)).
+* `display`: controls whether the column should appear in user-facing output
+  (see [Display](#display)).
 * `description`: a human-readable description of the column. Can use markdown.
-* `details`: additional information about the column, e.g. how it was computed or edge cases to watch out for. Can be any length.
+* `details`: additional information about the column, e.g. how it was computed
+  or edge cases to watch out for. Can be any length.
+* `values`, `range`, `examples`: representative values (see
+  [Representative values](#representative-values)).
+* `units`: the unit of measurement; only meaningful on a numeric column.
+* `time_zone`: the time zone; only meaningful on a timestamp column (see
+  [Time zones](#time-zones)).
 
-Some properties only apply to certain types:
-
-* `units`: the unit of measurement, for `number(quantity)` columns only (see [Measures](#measures)).
-* `time_zone`: the time zone, for `datetime` columns only (see [Time zones](#time-zones)).
-
-Each column also needs describe some representative values, using exactly one of `values`, `range`, or `examples`. See [Representative values](#representative-values) for details.
-
-A column may also be listed with only its `name` and no `type`. This acknowledges the column without describing it and you should use it for columns that you don't care about but don't want flagged as undocumented. Such a column makes no claims about its contents, so it's never check, but it must still exist in the data.
+A column may also be listed with only its `name` and no `type`. This
+acknowledges the column without describing it, and you should use it for
+columns that you don't care about but don't want flagged as undocumented. Such
+a column makes no claim about its contents, so its type is never checked — but
+it must still exist in the database.
 
 #### Description & details
 
-The `description` and `details` are free text fields that humans and agents can use to jot down important notes. The `description` should be short, typically a few sentences or at most a paragraph and will be displayed in user interfaces. The `details` can be any length, and is a good place to carefully record all the details of the table.
+The `description` and `details` are free text fields that humans and agents
+can use to jot down important notes. The `description` should be short,
+typically a few sentences or at most a paragraph, and will be displayed in
+user interfaces. The `details` can be any length, and is a good place to
+carefully record all the details of the table.
 
 #### Display
 
-The optional `display` property controls whether a column should appear in user-facing output. Currently, the only supported value is `restricted`:
+The optional `display` property controls whether a column should appear in
+user-facing output. Currently, the only supported value is `restricted`:
 
 ```yaml
 - name: ssn
-  type: string
+  type: VARCHAR
   display: restricted
   examples: [000-00-0000]
 ```
 
-A restricted column must be excluded from default user interfaces and other user-facing output, including tables, plots, and downloads. We can't guarantee this protection, but we hope it will steer agents (and humans!) away from showing it by default.
+A restricted column must be excluded from default user interfaces and other
+user-facing output, including tables, plots, and downloads. We can't guarantee
+this protection, but we hope it will steer agents (and humans!) away from
+showing it by default.
 
 #### Types
 
-Types capture data types at a level that makes sense for analysis, which is typically coarser than the logical types of the underlying data.
+A column's `type` is written in DuckDB's own type system: any
+[native DuckDB type expression](https://duckdb.org/docs/current/sql/data_types/overview.html) —
+`BIGINT`, `DECIMAL(12, 2)`, `VARCHAR`, `ENUM('buy', 'sell')`,
+`STRUCT(city VARCHAR, postcode INTEGER)`, `INTEGER[]`, `FLOAT[768]`, and so
+on — or the name of a [`typedef`](#typedefs) alias, which expands to one.
 
-The supported types are:
-
-* `number`: numeric values (integers or floating-point). Can be qualified with a measure in parentheses: `number(id)`, `number(ordinal)`, or `number(quantity)`. See [Measures](#measures).
-* `string`: UTF-8 text strings.
-* `boolean`: true/false values.
-* `date`: calendar dates, written as ISO 8601 strings (`YYYY-MM-DD`, e.g. `2024-01-31`).
-* `datetime`: date-times, written as ISO 8601 strings. Without a `time_zone` they carry an offset (e.g. `2024-01-31T09:30:00Z`); with a `time_zone` they're written zoneless and interpreted in that zone (see [Time zones](#time-zones)).
-* `enum`: a column with repeated values from a known set. The allowed values are listed in the `values` property.
-
-#### Measures
-
-The `number` type can be qualified with a measure in parentheses that classifies what operations are meaningful:
-
-| Type | Can compare | Can average | Can sum | Examples |
-|------------|-------------|-------------|---------|----------|
-| `number(id)` | No | No | No | primary keys, foreign keys, codes |
-| `number(ordinal)` | Yes | No | No | ranks, years, sequence numbers |
-| `number(quantity)` | Yes | Yes | Yes | weights, counts, amounts |
-
-A `number(quantity)` column can also declare its `units`: a free-text string naming the unit of measurement, such as `kg`, `USD`, or `seconds`. Units are only meaningful for quantities — they're how you tell apart two columns that share a `range` but measure different things — so `units` is an error on any other type.
-
-```yaml
-- name: mass
-  type: number(quantity)
-  units: g
-  range: [0, 5000]
-```
+There is no coarse intermediate vocabulary: the dictionary records exactly the
+type the database has, so validation can compare with full fidelity (struct
+fields, enum values, decimal precision, array sizes), and generators can
+produce accurate DDL and code from the dictionary. Validation canonicalizes
+both sides through DuckDB itself — the declared type is instantiated in a
+scratch in-memory database and both sides are read back with `DESCRIBE` — so
+spelling differences that DuckDB considers equivalent (case, whitespace, type
+shorthands) never produce a false mismatch. A type expression DuckDB rejects
+is reported with DuckDB's own error at the column's `type:` (see M09 in
+[Validation](validation.md)).
 
 #### Representative values
 
-Every type has some way of representing the data it contains: an exhaustive set of values, a range, or a handful of examples. Each such column carries exactly one of the following three properties, and which one is determined by the column's `type`:
+A column can describe its contents with representative values, using one of
+three properties:
 
-* `values`: the allowed values for an `enum` column. Can be a list (`[M, F, U]`) when values are self-explanatory, or a map (`{M: Male, F: Female, U: Unknown}`) when values need labels. The values themselves must be scalars (string, number, or boolean); in the map form the labels must be strings. (`boolean` columns implicitly have `values: [true, false]`, no need to explicitly include it.)
-* `range`: a two-element list `[min, max]` giving the inclusive minimum and maximum *observed* in the column. Like `examples`, it describes the data rather than constraining it — a value outside the range will generate a warning, not a validation error. Used for the ordered numeric and temporal types: `number(ordinal)`, `number(quantity)`, `date`, and `datetime`. Both elements must match the column's type, and the minimum must not exceed the maximum.
+* `values`: the allowed values for a categorical column. Can be a list
+  (`[M, F, U]`) when values are self-explanatory, or a map
+  (`{M: Male, F: Female, U: Unknown}`) when values need labels. The values
+  themselves must be scalars (string, number, or boolean); in the map form the
+  labels must be strings. A column whose type is an `ENUM` already lists its
+  categories in its type, so `values` is for categorical columns stored as
+  plain types (most often `VARCHAR`).
+* `range`: a two-element list `[min, max]` giving the inclusive minimum and
+  maximum *observed* in the column. It describes the data rather than
+  constraining it. Only meaningful on an orderable type — numeric, `DATE`,
+  `TIMESTAMP`, or `TIMESTAMP WITH TIME ZONE` — and each bound must match the
+  column's type: numbers for numeric columns, ISO 8601 dates (`2024-01-31`)
+  for `DATE`, zoneless datetimes (`2024-01-31T09:30:00`) for `TIMESTAMP`, and
+  offset-carrying datetimes (`2024-01-31T09:30:00Z`) for
+  `TIMESTAMP WITH TIME ZONE`. The minimum must not exceed the maximum.
 
-    Either bound may be left open with negative infinity (`-.inf`) for the minimum or positive infinity (`.inf`) for the maximum. An open bound says the true extent is unknown or constantly moving, as in a daily export whose date column always runs up to the present. If you leave a bound open, make sure to describe the range in prose in the column's `description`.
-* `examples`: a list of ~5 representative values from the column. Used for all other types: `string`, `number`, and `number(id)`. Each example must match the column's type. A handful of concrete examples helps LLMs understand the column far better than a description alone. For instance, knowing that an id column holds `[1, 2, 3, 4, 5]` versus `[10000, 1235452, 234234]`. A good baseline is to select 5 evenly spaced values along the sorted unique values, and then add any particularly surprising values as you encounter them.
+    Either bound may be left open with negative infinity (`-.inf`) for the
+    minimum or positive infinity (`.inf`) for the maximum. An open bound says
+    the true extent is unknown or constantly moving, as in a daily export whose
+    date column always runs up to the present. If you leave a bound open, make
+    sure to describe the range in prose in the column's `description`.
+* `examples`: a list of ~5 representative values from the column. A handful of
+  concrete examples helps LLMs understand the column far better than a
+  description alone — knowing that an id column holds `[1, 2, 3, 4, 5]` versus
+  `[10000, 1235452, 234234]`. A good baseline is to select 5 evenly spaced
+  values along the sorted unique values, and then add any particularly
+  surprising values as you encounter them.
 
-`boolean` columns are the exception to this rule because they can only contain `true`, `false`, and (if not required) `null`.
+None of the three is required: a bare DuckDB type carries no intent (a `BIGINT`
+may be a measure or an identifier), so the dictionary cannot demand a
+particular representation. Validation instead rejects combinations that cannot
+make sense — `range` on an unorderable type, any of the three on a `BOOLEAN`
+(its values speak for themselves), `units` on a non-numeric column, `time_zone`
+on a non-timestamp column. See
+[the descriptive-key checks](validation.md#the-descriptive-key-checks-in-the-rich-format)
+for the exact rules.
 
 #### Time zones
 
-A `datetime` column can declare its `time_zone`, which says how to interpret its values as moments in time. The value is either an [IANA time zone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) or the sentinel `naive`:
+A timestamp column can declare its `time_zone`, which says how to interpret its
+values as moments in time. The value is either an
+[IANA time zone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
+or the sentinel `naive`:
 
-* A named zone — `UTC`, `America/New_York`, `Europe/Paris`, and so on — means the column records instants in time, displayed in that zone. `UTC` is the usual choice for timestamps stored as instants.
-* `naive` means the column records wall-clock date-times with no associated zone, so the same value can refer to different instants in different places. Use it for local times whose offset is unknown or irrelevant.
+* A named zone — `UTC`, `America/New_York`, `Europe/Paris`, and so on — means
+  the column records instants in time, displayed in that zone. `UTC` is the
+  usual choice for timestamps stored as instants.
+* `naive` means the column records wall-clock date-times with no associated
+  zone, so the same value can refer to different instants in different places.
+  Use it for local times whose offset is unknown or irrelevant.
 
-A named zone is either `UTC` or an IANA `Area/Location` name whose `Area` is one of `Africa`, `America`, `Antarctica`, `Arctic`, `Asia`, `Atlantic`, `Australia`, `Europe`, `Indian`, `Pacific`, or `Etc` (e.g. `America/New_York`, `Etc/GMT+5`). Validation checks this shape and the `Area` — enough to catch ambiguous abbreviations like `PST` or `EST` — but does not check the full location against a time zone database, so the accepted set doesn't go stale as zones are added or renamed.
+A named zone is either `UTC` or an IANA `Area/Location` name whose `Area` is
+one of `Africa`, `America`, `Antarctica`, `Arctic`, `Asia`, `Atlantic`,
+`Australia`, `Europe`, `Indian`, `Pacific`, or `Etc` (e.g. `America/New_York`,
+`Etc/GMT+5`). Validation checks this shape and the `Area` — enough to catch
+ambiguous abbreviations like `PST` or `EST` — but does not check the full
+location against a time zone database, so the accepted set doesn't go stale as
+zones are added or renamed.
 
-Time zones are only meaningful for date-times, so `time_zone` is an error on any other type. Omit `time_zone` when the zone is unknown or doesn't matter.
+Time zones are only meaningful for timestamps, so `time_zone` is an error on
+any other type. Omit `time_zone` when the zone is unknown or doesn't matter.
 
 ```yaml
 - name: observed_at
-  type: datetime
+  type: TIMESTAMP
   time_zone: UTC
   description: A running log; the newest timestamp advances with every export.
   range: [2020-01-01T00:00:00, .inf]
 ```
-NB: when `time_zone` is present, write the column's `range` as plain, zoneless date-times; they're interpreted in the declared zone.
 
+NB: a column that declares a named `time_zone` is typically a zoneless
+`TIMESTAMP` whose instants are interpreted in that zone. Range bounds follow
+the column's *type*: a `TIMESTAMP` column writes plain, zoneless date-times;
+a `TIMESTAMP WITH TIME ZONE` column writes bounds that carry their own
+offset.
 
 #### Column constraints
 
-The `constraints` property is a list of constraint names. The supported constraints are:
+The `constraints` property is a list of constraint names. The supported
+constraints are:
 
-* `primary_key`: the set of columns with the `primary_key` constraint uniquely identifies each row. Implies `required` and `unique`.
-* `foreign_key`: the column references a primary key in another table (or in the current table, if a self-join). The specific relationship is defined in [`relationships`](#relationships).
+* `primary_key`: the set of columns with the `primary_key` constraint uniquely
+  identifies each row. Implies `required` and `unique`.
+* `foreign_key`: the column references a primary key in another table (or in
+  the current table, if a self-join). The specific relationship is defined in
+  [`relationships`](#relationships).
 * `required`: the column does not contain null/missing values.
 * `unique`: the column's values are distinct (no duplicates).
 
 ## Relationships
 
-`relationships` is a list of join descriptors. Each entry describes how two tables are related.
+`relationships` is a list of join descriptors. Each entry describes how two
+tables are related.
 
-* `join` (required): a join expression of the form `table1.column = table2.column`, or `table1.date >= table2.start AND table1.date <= table2.end`.
-* `cardinality` (required): either `one-to-one`, `one-to-many`, or `many-to-one`. Describes the relationship from the left table to the right table in the join expression.
-* `description`: human-readable description of the relationship. Only needed if it's not clear from the context.
-* `conflicts`: a list of column names that appear in both tables with different meanings. These fields would cause ambiguity in a join and may need to be renamed or dropped.
+* `join` (required): a join expression of the form
+  `table1.column = table2.column`, or
+  `table1.date >= table2.start AND table1.date <= table2.end`.
+* `cardinality` (required): either `one-to-one`, `one-to-many`, or
+  `many-to-one`. Describes the relationship from the left table to the right
+  table in the join expression.
+* `description`: human-readable description of the relationship. Only needed if
+  it's not clear from the context.
+* `conflicts`: a list of column names that appear in both tables with different
+  meanings. These fields would cause ambiguity in a join and may need to be
+  renamed or dropped.
 
 For example:
 
@@ -218,7 +379,10 @@ relationships:
 
 ## Glossary
 
-`glossary` is a map from term to definition. Each entry provides a plain-language definition of a domain-specific term used in the table or column descriptions, or is likely to be used by a domain expert working with this data.
+`glossary` is a map from term to definition. Each entry provides a
+plain-language definition of a domain-specific term used in the table or column
+descriptions, or is likely to be used by a domain expert working with this
+data.
 
 ```yaml
 glossary:
@@ -229,19 +393,107 @@ glossary:
 
 ## Version
 
-`version` records the version of the data this dictionary describes, so people and tools can tell two snapshots of the data apart and know which one a given dictionary goes with. (This is distinct from `$version`, which records the version of the *spec* the document conforms to.)
+`version` records the version of the data this dictionary describes, so people
+and tools can tell two snapshots of the data apart and know which one a given
+dictionary goes with. (This is distinct from `$version`, which records the
+version of the *spec* the document conforms to.)
 
-`version` is optional. It's a map with exactly one of three keys, which names both the kind of version and its value:
+`version` is optional. It's a map with exactly one of three keys, which names
+both the kind of version and its value:
 
-* `number`: a hand-curated version number with three dot-separated numeric components, optionally followed by a pre-release (`-…`) and/or build (`+…`) suffix, such as `1.2.0` or `1.2.0-rc.1`.
-* `date`: a release date in ISO 8601 form (`YYYY-MM-DD`), such as `2024-01-31`, for data refreshed on a schedule.
-* `hash`: an opaque identifier, such as `a1b2c3d`, derived from the data itself.
+* `number`: a hand-curated version number with three dot-separated numeric
+  components, optionally followed by a pre-release (`-…`) and/or build (`+…`)
+  suffix, such as `1.2.0` or `1.2.0-rc.1`.
+* `date`: a release date in ISO 8601 form (`YYYY-MM-DD`), such as
+  `2024-01-31`, for data refreshed on a schedule.
+* `hash`: an opaque identifier, such as `a1b2c3d`, derived from the data
+  itself.
 
-If you use a `number`, we recommend [semantic versioning](https://datapackage.org/recipes/data-package-version/): increment the first component for incompatible changes, the second for backwards-compatible additions, and the third for backwards-compatible fixes.
+If you use a `number`, we recommend
+[semantic versioning](https://datapackage.org/recipes/data-package-version/):
+increment the first component for incompatible changes, the second for
+backwards-compatible additions, and the third for backwards-compatible fixes.
 
-`data-dict` checks that exactly one key is present, that a `number` has three dot-separated numeric components (with an optional suffix), and that a `date` is a valid ISO 8601 date, but otherwise treats the version as opaque.
+The validator checks that exactly one key is present, that a `number` has three
+dot-separated numeric components (with an optional suffix), and that a `date`
+is a valid ISO 8601 date, but otherwise treats the version as opaque.
 
 ```yaml
 version:
   date: 2024-01-31
 ```
+
+## The legacy format (0.1.0) {#the-legacy-format-010}
+
+`$version: 0.1.0` selects the original `data-dict.yaml` format. Everything
+above about the `name`/`description`/`details` trio, name-only columns,
+`display`, `constraints`, `relationships`, `glossary`, and `version` applies
+unchanged; this section describes where the legacy format differs. There is no
+`typedef`, no `label`, and no dictionary-level `source` — and the rules for
+representative values change from optional to required (below).
+
+### Legacy source
+
+`source` lives on each *table*, not on the dictionary, and points at a Parquet
+file:
+
+```yaml
+tables:
+  - name: food
+    source:
+      parquet: inst/parquet/food.parquet
+```
+
+* `parquet`: path to a Parquet file. Relative paths are resolved relative to
+  the dictionary file.
+
+Parquet is the only source the legacy format can validate against. As at the
+dictionary level, a table's `source` is optional for spec validation but
+required by the metadata and data levels.
+
+### Legacy types
+
+Legacy types capture data at a level that makes sense for analysis, which is
+typically coarser than the logical types of the underlying data:
+
+* `number`: numeric values (integers or floating-point). Can be qualified with
+  a measure in parentheses: `number(id)`, `number(ordinal)`, or
+  `number(quantity)` — see [Measures](#measures) below.
+* `string`: UTF-8 text strings.
+* `boolean`: true/false values.
+* `date`: calendar dates, written as ISO 8601 strings (`YYYY-MM-DD`, e.g.
+  `2024-01-31`).
+* `datetime`: date-times, written as ISO 8601 strings. Without a `time_zone`
+  they carry an offset (e.g. `2024-01-31T09:30:00Z`); with a `time_zone`
+  they're written zoneless and interpreted in that zone.
+* `enum`: a column with repeated values from a known set. The allowed values
+  are listed in the `values` property.
+
+#### Measures
+
+The `number` type can be qualified with a measure in parentheses that
+classifies what operations are meaningful:
+
+| Type | Can compare | Can average | Can sum | Examples |
+|------------|-------------|-------------|---------|----------|
+| `number(id)` | No | No | No | primary keys, foreign keys, codes |
+| `number(ordinal)` | Yes | No | No | ranks, years, sequence numbers |
+| `number(quantity)` | Yes | Yes | Yes | weights, counts, amounts |
+
+A `number(quantity)` column can also declare its `units`; units are an error on
+any other legacy type. `time_zone` is likewise reserved for `datetime` columns.
+
+#### Legacy representative values
+
+Where the rich format makes representative values optional, the legacy format
+*requires* each typed column to carry exactly one of `values`, `range`, or
+`examples`, determined by the column's type:
+
+* `values` for `enum` columns.
+* `range` for the ordered numeric and temporal types: `number(ordinal)`,
+  `number(quantity)`, `date`, and `datetime`.
+* `examples` for all other types: `string`, `number`, and `number(id)`.
+
+`boolean` columns are the exception: they can only contain `true`, `false`, and
+(if not `required`) `null`, so they carry none of the three. Each `range` and
+`examples` value must match the column's declared type.

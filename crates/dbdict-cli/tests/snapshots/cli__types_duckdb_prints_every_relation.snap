@@ -1,0 +1,15 @@
+---
+source: crates/dbdict-cli/tests/cli.rs
+expression: stdout
+---
+orders
+  #  column  type
+  ─────────────────────────────────────────────────
+  1  id      INTEGER
+  2  home    STRUCT(city VARCHAR, postcode INTEGER)
+
+trades
+  #  column  type
+  ────────────────────────
+  1  qty     BIGINT
+  2  price   DECIMAL(12,2)

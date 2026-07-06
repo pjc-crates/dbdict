@@ -8,7 +8,6 @@ repository.workspace = true
 
 [dependencies]
 dbdict.workspace = true
-serde_json.workspace = true
 duckdb.workspace = true
 
 [dev-dependencies]

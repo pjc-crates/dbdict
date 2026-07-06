@@ -229,14 +229,83 @@ Prove mechanism **C** (round-trip) before building the feature on it.
 >   deleted in phase 4); site/validation.md "scratch tables" reworded to
 >   per-column and the case-insensitive rule noted.
 
-### phase 4: CLI + docs + polish
-- [ ] CLI: `types duckdb` (native), `validate-meta` wiring; consider an
-      `expand`/`resolve` command that prints a typedef's canonical expansion.
-- [ ] delete the dead shell-out reader code once native replaces it.
-- [ ] docs: `site/spec.md` (`typedef:` + rich types), `README.md`; remove the
-      retired coarse-type prose.
-- **verify:** `cargo build --workspace --release` + `cargo test --workspace`
-      green; confirm the binary runs with **no `duckdb` on PATH** (self-contained).
+### phase 4: CLI + docs + polish — DONE 2026-07-06T12:46:23+12:00
+
+> **decisions (2026-07-06, asked at phase start):** include the `resolve`
+> command (yes); rich *data* level (D01 via duckdb) deferred to a future
+> session — the `RichFormatUnsupported` pre-flight stays; spec.md is ONE doc,
+> rich-first, with legacy 0.1.0 in its own clearly-marked section.
+
+- [x] CLI: `types duckdb <db>` (native, via `read_schema`) — prints every
+      relation (tables and views) with canonical column types, `─` rule under
+      each header matching the parquet printer. `validate-meta` wiring needed
+      nothing (done in phase 3).
+- [x] CLI: `resolve [dict]` — prints `name  declared-expr  → canonical` for
+      every typedef: globals first, then per-table groups; duckdb's error
+      inline and exit 1 when an alias is unknown/cyclic/malformed; legacy
+      dict → `(no typedefs)`, exit 0. Backend: `dbdict_duckdb::
+      expand_typedefs` + `TypedefExpansion`, sharing the fixpoint/probe
+      machinery via `effective_typedefs` + `probe_type` helpers factored out
+      of `instantiate_table` (which got simpler); core's `load_and_lower`
+      made public — the model entry point for the CLI and future generators.
+- [x] deleted the dead shell-out reader: `describe`/`column_types`/
+      `parse_describe`/`ColumnTypeInfo`/`DuckdbError`/`DictType`/
+      `dict_type_for`, `src/error.rs`, `src/types.rs`, `tests/describe.rs`;
+      `quote_ident` moved into native.rs; serde_json dep dropped from
+      dbdict-duckdb. No `duckdb` CLI needed by anything anymore.
+- [x] docs: `site/spec.md` rewritten rich-first ($version discriminator,
+      typedef, dict-level `source.duckdb`, duckdb-native types with verified
+      duckdb-docs links, `label`; legacy 0.1.0 section keeps coarse types /
+      measures / per-table parquet). `README.md` rewritten for dbdict (fork
+      note, rich example, command listing kept in step with the CLI
+      snapshot, 4-crate layout). Consistency fixes found on the way:
+      `data-dict` → `dbdict` command names in validation.md, stale "rework
+      pending" comment in schema-0.2.yaml, stale shell-out note in CLAUDE.md.
+- **verify:** PASSED 2026-07-06 — `cargo build --workspace --release` green;
+      `cargo test --workspace` 205 passed / 0 failed; clippy + rustfmt clean;
+      release binary ran `validate-meta` (clean rich round-trip + correct
+      M07), `types duckdb`, and `resolve` with `duckdb` **stripped from
+      PATH** (self-contained confirmed).
+
+> **3-agent review (2026-07-06, correctness / idiom / tests+docs) — all
+> findings actioned same day, each fix re-verified against the reviewer's own
+> repro; two items deliberately deferred (below).**
+> - **BUG (correctness, verified end-to-end): `resolve` contradicted
+>   `validate-meta`** when a table shadowed a *dependency* of an unshadowed
+>   global (`a: intish` global; table redefines `intish`) — validation
+>   instantiates that table with the reshaped `a`, but resolve only printed
+>   the global expansion. FIXED: the per-table pass now emits an entry for
+>   any global whose expansion *differs* in the table's context (outcome
+>   comparison, no dependency-graph parsing). Pinned by
+>   `shadowed_dependency_reshapes_a_global_in_table_context`.
+> - **dead field (all three reviewers, independently): `TypedefExpansion.
+>   expr` was never printed** though its doc + test claimed the CLI shows it.
+>   FIXED by printing it — `money  DECIMAL(12, 2)  → DECIMAL(12,2)` — which
+>   is also just better output.
+> - cosmetic leading blank line (scoped-only dicts) fixed; `probe_type` doc
+>   corrected (single-row check is a tripwire, not a boundary — statement
+>   smuggling only lets a dict lie about its own expected side; safety basis
+>   is open_scratch); `expansion_for` → `expansion_result` with the
+>   fixpoint position-coupling documented and the `index`→`position` naming
+>   aligned with instantiate_table; keep-in-step notes on the fixture
+>   builders duplicated between tests/instantiate.rs and tests/expand.rs.
+> - **docs accuracy (docs are high-severity here):** legacy-format anchor
+>   Quarto-proofed with an explicit `{#…}` id (pandoc keeps dots in auto
+>   ids); the "time_zone implies zoneless TIMESTAMP" NB reworded (rich S14
+>   accepts both timestamp categories); inherited-but-false "(may include
+>   globs)" deleted; "never locks it" → "for writing"; case-insensitivity
+>   qualified as ASCII folding (matches names_eq); "descriptive keys"
+>   terminology collision in the legacy intro resolved; last `data-dict.yaml`
+>   mention in validation.md reworded.
+> - **tests added** for the review's gaps: 4 CLI e2e (resolve output
+>   snapshot, broken-typedef → exit 1 with inline error, legacy → "(no
+>   typedefs)" exit 0, types duckdb snapshot) + stalled-*scoped*-typedef
+>   position guard in expand.rs. Workspace 199 → 205 tests.
+> - **deferred (user decisions, not defects):** `$learn_more` recommended URL
+>   and `site/CNAME` still point at `data-dict.tidyverse.org` — fork
+>   branding/domain call; and (pre-existing, phase-3 territory) two dict
+>   tables differing only in case pass S10 but would both match one db
+>   relation case-insensitively at the meta level.
 
 ## open items / risks
 - **Spike outcome** (C vs A vs B) — decided in phase 1, recorded there.
@@ -249,8 +318,13 @@ Prove mechanism **C** (round-trip) before building the feature on it.
   collisions by construction.
 - **Build cost:** first bundled build is multi-minute + large binary; acceptable
   (self-contained). Subsequent builds cached.
-- Retire the phase-1 feature-gate scaffolding entirely (duckdb mandatory).
-- Phase 4 addition (from phase 3): retire `dict_type_for` + the shell-out
-  `describe`/`column_types` in dbdict-duckdb together with the dead reader;
-  consider a rich *data* level (D01 via duckdb) to replace the remaining
-  `RichFormatUnsupported` pre-flight in `validate-data`.
+- Retire the phase-1 feature-gate scaffolding — RESOLVED before phase 4 (no
+  `[features]`/`cfg(feature)` anywhere in the workspace).
+- Phase 4 addition (from phase 3) — DONE in phase 4: `dict_type_for` + the
+  shell-out `describe`/`column_types` deleted with the dead reader.
+- **Deferred beyond this session:** rich *data* level (D01 via duckdb) to
+  replace the `RichFormatUnsupported` pre-flight in `validate-data` (decided
+  2026-07-06); fork branding — `$learn_more` URL + `site/CNAME` still point
+  at `data-dict.tidyverse.org`; case-insensitive table-name collision (two
+  dict tables differing only in case pass S10 but both match one db relation
+  at the meta level — pre-existing).

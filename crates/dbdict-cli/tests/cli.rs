@@ -7,7 +7,7 @@ use std::process::Command;
 /// nested ones like `skill read`.
 ///
 /// When this snapshot changes (i.e. the set of commands changes), update the
-/// command listing under "### Usage" in the repo-root README.md to match.
+/// command listing under "## The CLI" in the repo-root README.md to match.
 #[test]
 fn no_args_lists_all_subcommands() {
     let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
@@ -105,6 +105,129 @@ fn validate_meta_rich_round_trip_succeeds() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ok"), "got {stdout:?}");
+}
+
+/// A fresh temp dir for a test that builds its own fixture files.
+fn temp_fixture_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("dbdict-cli-{}-{}", name, std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// `resolve` prints globals, then per-table groups, as
+/// `name  declared  → canonical` — the format users script against.
+#[test]
+fn resolve_prints_global_and_scoped_expansions() {
+    let dir = temp_fixture_dir("resolve-ok");
+    let dict = dir.join("dbdict.yaml");
+    std::fs::write(
+        &dict,
+        indoc::indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            typedef:
+              money: DECIMAL(12, 2)
+              address: STRUCT(city VARCHAR, postcode INTEGER)
+            tables:
+              - name: trades
+                typedef:
+                  money: DECIMAL(18, 4)
+                columns:
+                  - name: price
+                    type: money
+        "#},
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("resolve")
+        .arg(&dict)
+        .output()
+        .expect("failed to run dbdict");
+    assert!(output.status.success(), "expected success: {output:?}");
+    let stdout = String::from_utf8(output.stdout).expect("stdout is not valid UTF-8");
+    insta::assert_snapshot!(stdout);
+}
+
+/// A typedef duckdb rejects fails `resolve` and names the problem inline.
+#[test]
+fn resolve_fails_on_a_broken_typedef() {
+    let dir = temp_fixture_dir("resolve-broken");
+    let dict = dir.join("dbdict.yaml");
+    std::fs::write(
+        &dict,
+        indoc::indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            typedef:
+              dangling: NO_SUCH_TYPE
+            tables: []
+        "#},
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("resolve")
+        .arg(&dict)
+        .output()
+        .expect("failed to run dbdict");
+    assert!(!output.status.success(), "a broken typedef must fail");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // duckdb's message is not snapshotted (it may change across versions);
+    // the contract is: the entry is printed with an inline error
+    assert!(stdout.contains("dangling"), "got {stdout:?}");
+    assert!(stdout.contains("error:"), "got {stdout:?}");
+}
+
+/// A legacy (0.1.0) dictionary has no `typedef:` key to resolve; the command
+/// succeeds and says so rather than failing.
+#[test]
+fn resolve_on_a_legacy_dictionary_reports_no_typedefs() {
+    let dir = temp_fixture_dir("resolve-legacy");
+    let dict = dir.join("data-dict.yaml");
+    std::fs::write(
+        &dict,
+        indoc::indoc! {r#"
+            $version: "0.1.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            tables: []
+        "#},
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("resolve")
+        .arg(&dict)
+        .output()
+        .expect("failed to run dbdict");
+    assert!(output.status.success(), "expected success: {output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("(no typedefs)"), "got {stdout:?}");
+}
+
+/// `types duckdb` lists every relation with its canonical column types.
+#[test]
+fn types_duckdb_prints_every_relation() {
+    let dir = temp_fixture_dir("types-duckdb");
+    let db = dir.join("warehouse.duckdb");
+    let conn = duckdb::Connection::open(&db).expect("create db");
+    conn.execute_batch(
+        "CREATE TABLE trades (qty BIGINT, price DECIMAL(12,2));
+         CREATE TABLE orders (id INTEGER, home STRUCT(city VARCHAR, postcode INTEGER));",
+    )
+    .expect("create schema");
+    drop(conn); // flush and close before the binary opens it read-only
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("types")
+        .arg("duckdb")
+        .arg(&db)
+        .output()
+        .expect("failed to run dbdict");
+    assert!(output.status.success(), "expected success: {output:?}");
+    let stdout = String::from_utf8(output.stdout).expect("stdout is not valid UTF-8");
+    insta::assert_snapshot!(stdout);
 }
 
 /// Strip terminal styling (ANSI SGR escapes and OSC-8 hyperlinks) and rewrite

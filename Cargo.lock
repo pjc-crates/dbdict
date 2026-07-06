@@ -668,7 +668,6 @@ dependencies = [
  "duckdb",
  "indoc",
  "quarto-source-map",
- "serde_json",
 ]
 
 [[package]]

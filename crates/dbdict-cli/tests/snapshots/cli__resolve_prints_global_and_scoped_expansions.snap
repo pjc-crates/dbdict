@@ -1,0 +1,9 @@
+---
+source: crates/dbdict-cli/tests/cli.rs
+expression: stdout
+---
+money    DECIMAL(12, 2)                          → DECIMAL(12,2)
+address  STRUCT(city VARCHAR, postcode INTEGER)  → STRUCT(city VARCHAR, postcode INTEGER)
+
+table trades:
+  money    DECIMAL(18, 4)                          → DECIMAL(18,4)

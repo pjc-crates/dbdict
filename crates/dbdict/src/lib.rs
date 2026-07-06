@@ -43,10 +43,14 @@ pub enum Level {
     Data,
 }
 
-/// The shared prologue for every dataset-comparing level: load the document,
-/// validate the spec, and lower to the model. `Err` carries the problems found
-/// when validation cannot continue past the spec level.
-pub(crate) fn load_and_lower(dict_path: &Path) -> Result<(ProblemSet, DataDict), ProblemSet> {
+/// Load a dictionary, validate its spec, and lower it to the typed model.
+///
+/// The shared prologue for every dataset-comparing level, and the public
+/// entry point for anything else that consumes the lowered model (the CLI's
+/// `resolve` command; future generators). `Ok` carries the model together
+/// with any warnings; `Err` carries the problems found when validation
+/// cannot continue past the spec level.
+pub fn load_and_lower(dict_path: &Path) -> Result<(ProblemSet, DataDict), ProblemSet> {
     // `?` works here because both sides of the Result carry a ProblemSet
     let (mut problems, doc) = load(dict_path)?;
     match validate_and_lower(&doc, &mut problems) {
