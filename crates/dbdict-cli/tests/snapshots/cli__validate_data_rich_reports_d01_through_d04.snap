@@ -1,6 +1,6 @@
 ---
 source: crates/dbdict-cli/tests/cli.rs
-assertion_line: 365
+assertion_line: 380
 expression: "sanitize(&stderr, &dict.display().to_string())"
 ---
 error: [D01] A required column must not contain nulls.
@@ -28,3 +28,12 @@ error: [D03] A unique column must not contain duplicate values.
 16 |         type: VARCHAR
 17 |         constraints: [unique]
    |                       ^^^^^^ has 1 duplicated value
+error: [D04] A foreign key value must exist in the primary key it references.
+  --> <fixture>:20:23
+   |
+ 7 |   - name: trades
+...
+18 |       - name: cat_id
+19 |         type: BIGINT
+20 |         constraints: [foreign_key]
+   |                       ^^^^^^^^^^^ has 1 orphaned value (no match in categories.id)

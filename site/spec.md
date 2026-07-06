@@ -365,7 +365,9 @@ constraints are:
   identifies each row. Implies `required` and `unique`.
 * `foreign_key`: the column references a primary key in another table (or in
   the current table, if a self-join). The specific relationship is defined in
-  [`relationships`](#relationships).
+  [`relationships`](#relationships) — an *equality* conjunct pairing the
+  column with a `primary_key` column. `dbdict validate-data` checks the
+  reference against the data (see D04 in [Validation](validation.md)).
 * `required`: the column does not contain null/missing values.
 * `unique`: the column's values are distinct (no duplicates). NULLs are
   excluded, per SQL `UNIQUE` semantics. `dbdict validate-data` checks this

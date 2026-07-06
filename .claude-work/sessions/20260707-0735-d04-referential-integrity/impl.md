@@ -84,20 +84,24 @@
   tests demonstrably red before implementation; clippy + fmt clean
   — PASSED
 
-### phase 2: CLI e2e + docs
-- [ ] extend the rich-data CLI e2e fixtures (crates/dbdict-cli/tests/cli.rs):
+### phase 2: CLI e2e + docs — DONE 2026-07-07T08:22:54+12:00
+- [x] extend the rich-data CLI e2e fixtures (crates/dbdict-cli/tests/cli.rs):
       seeded fixture gains a second table + fk column with an orphaned
       value → snapshot shows D01+D02+D03+D04, D04 anchored at the
-      `foreign_key` constraint (test renamed to match coverage; old
-      snapshot deleted with the rename); clean fixture gains the same
-      shape with all fk values present plus a NULL fk → still exits 0
-      (locks NULL exclusion end to end)
-- [ ] README.md: validate-data bullet mentions orphaned `foreign_key`
+      `foreign_key` constraint (test renamed to
+      `validate_data_rich_reports_d01_through_d04`; old snapshot deleted
+      with the rename; .snap.new reviewed before accepting); clean
+      fixture gains the same shape with all fk values present plus a
+      NULL fk → still exits 0 (locks NULL exclusion end to end)
+- [x] README.md: validate-data bullet mentions orphaned `foreign_key`
       values (D04) alongside D01–D03
-- [ ] site/spec.md: the `foreign_key` constraint bullet and/or the
-      relationships section points at D04 in validation.md (the D03
-      cross-reference pattern)
+- [x] site/spec.md: the `foreign_key` constraint bullet points at D04 in
+      validation.md (the D03 cross-reference pattern); the bullet also
+      now states the pairing rule (equality conjunct with a
+      `primary_key` column), matching S01/D04 wording in validation.md;
+      relationships section left unchanged — the bullet covers it
 - **verify:** `cargo test --workspace` green; snapshots reviewed before
   accepting; seeded fixture exits 1 reporting D01–D04, clean fixture
   exits 0; `cargo clippy --workspace --all-targets` + `cargo fmt --check`
-  clean
+  clean — PASSED (274 passed / 0 failed; exit codes asserted in the
+  tests themselves)

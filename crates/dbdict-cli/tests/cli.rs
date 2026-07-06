@@ -316,16 +316,20 @@ fn spec_dies_quietly_when_stdout_pipe_closes() {
 }
 
 /// The rich data level through the binary: seeded D01 (nulls in a required
-/// column), D02 (duplicated primary key), and D03 (duplicated value in a
-/// `unique` column) violations all report, with their codes, and fail the run.
+/// column), D02 (duplicated primary key), D03 (duplicated value in a `unique`
+/// column), and D04 (orphaned `foreign_key` value) violations all report,
+/// with their codes, and fail the run.
 #[test]
-fn validate_data_rich_reports_d01_d02_and_d03() {
+fn validate_data_rich_reports_d01_through_d04() {
     let dir = temp_fixture_dir("rich-data");
 
     let conn = duckdb::Connection::open(dir.join("warehouse.duckdb")).expect("create db");
     conn.execute_batch(
-        "CREATE TABLE trades (id BIGINT, qty BIGINT, ref VARCHAR);
-         INSERT INTO trades VALUES (1, 10, 'ord-1'), (1, NULL, 'ord-1'), (2, 20, 'ord-2');",
+        "CREATE TABLE trades (id BIGINT, qty BIGINT, ref VARCHAR, cat_id BIGINT);
+         INSERT INTO trades VALUES
+           (1, 10, 'ord-1', 1), (1, NULL, 'ord-1', 1), (2, 20, 'ord-2', 99);
+         CREATE TABLE categories (id BIGINT);
+         INSERT INTO categories VALUES (1);",
     )
     .expect("create fixture");
     drop(conn); // flush and close before the binary opens it read-only
@@ -351,6 +355,17 @@ fn validate_data_rich_reports_d01_d02_and_d03() {
                   - name: ref
                     type: VARCHAR
                     constraints: [unique]
+                  - name: cat_id
+                    type: BIGINT
+                    constraints: [foreign_key]
+              - name: categories
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+            relationships:
+              - join: trades.cat_id = categories.id
+                cardinality: many-to-one
         "#},
     )
     .unwrap();
@@ -368,15 +383,20 @@ fn validate_data_rich_reports_d01_d02_and_d03() {
 /// The same fixture without the violations passes the data level cleanly.
 /// The `unique` column holds distinct values plus *repeated NULLs* — locking
 /// end to end that D03 follows SQL UNIQUE semantics (NULLs compare as
-/// distinct, so an optional-but-unique column may hold many).
+/// distinct, so an optional-but-unique column may hold many). The
+/// `foreign_key` column holds present values plus a NULL — locking end to end
+/// that D04 excludes NULLs (MATCH SIMPLE: NULL means "no reference").
 #[test]
 fn validate_data_rich_clean_passes() {
     let dir = temp_fixture_dir("rich-data-clean");
 
     let conn = duckdb::Connection::open(dir.join("warehouse.duckdb")).expect("create db");
     conn.execute_batch(
-        "CREATE TABLE trades (id BIGINT, qty BIGINT, ref VARCHAR);
-         INSERT INTO trades VALUES (1, 10, 'ord-1'), (2, 20, NULL), (3, 30, NULL);",
+        "CREATE TABLE trades (id BIGINT, qty BIGINT, ref VARCHAR, cat_id BIGINT);
+         INSERT INTO trades VALUES
+           (1, 10, 'ord-1', 1), (2, 20, NULL, 2), (3, 30, NULL, NULL);
+         CREATE TABLE categories (id BIGINT);
+         INSERT INTO categories VALUES (1), (2);",
     )
     .expect("create fixture");
     drop(conn);
@@ -402,6 +422,17 @@ fn validate_data_rich_clean_passes() {
                   - name: ref
                     type: VARCHAR
                     constraints: [unique]
+                  - name: cat_id
+                    type: BIGINT
+                    constraints: [foreign_key]
+              - name: categories
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+            relationships:
+              - join: trades.cat_id = categories.id
+                cardinality: many-to-one
         "#},
     )
     .unwrap();
