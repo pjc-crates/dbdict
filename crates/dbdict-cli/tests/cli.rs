@@ -405,3 +405,111 @@ fn validate_data_rich_clean_passes() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "stderr:\n{stderr}");
 }
+
+/// `ddl` prints an executable DuckDB script — CREATE TYPE per typedef in
+/// dependency order, then CREATE TABLE per table — the format users pipe
+/// into `duckdb`.
+#[test]
+fn ddl_prints_an_executable_script() {
+    let dir = temp_fixture_dir("ddl-ok");
+    let dict = dir.join("dbdict.yaml");
+    std::fs::write(
+        &dict,
+        indoc::indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            typedef:
+              big: money[]
+              money: DECIMAL(18, 4)
+            tables:
+              - name: trades
+                columns:
+                  - name: qty
+                    type: BIGINT
+                  - name: prices
+                    type: big
+              - name: memos
+                columns:
+                  - name: body
+        "#},
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("ddl")
+        .arg(&dict)
+        .output()
+        .expect("failed to run dbdict");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stderr:\n{stderr}");
+    let stdout = String::from_utf8(output.stdout).expect("stdout is not valid UTF-8");
+    insta::assert_snapshot!(stdout);
+}
+
+/// Table-scoped typedef shadowing cannot be spelled in one flat script; `ddl`
+/// refuses with a clear error instead of generating something broken.
+#[test]
+fn ddl_refuses_shadowed_typedefs() {
+    let dir = temp_fixture_dir("ddl-shadowed");
+    let dict = dir.join("dbdict.yaml");
+    std::fs::write(
+        &dict,
+        indoc::indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            typedef:
+              money: DECIMAL(18, 4)
+            tables:
+              - name: trades
+                typedef:
+                  money: DECIMAL(12, 2)
+                columns:
+                  - name: price
+                    type: money
+        "#},
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("ddl")
+        .arg(&dict)
+        .output()
+        .expect("failed to run dbdict");
+    assert!(!output.status.success(), "shadowing must refuse");
+    // nothing usable goes to stdout; the reason goes to stderr, naming the
+    // typedef and both definition sites
+    assert!(output.stdout.is_empty(), "got {:?}", output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("money"), "got: {stderr}");
+    assert!(stderr.contains("trades"), "got: {stderr}");
+}
+
+/// A legacy (0.1.0) dictionary has no DuckDB types to generate from; `ddl`
+/// says so and fails rather than emitting broken SQL.
+#[test]
+fn ddl_refuses_a_legacy_dictionary() {
+    let dir = temp_fixture_dir("ddl-legacy");
+    let dict = dir.join("data-dict.yaml");
+    std::fs::write(
+        &dict,
+        indoc::indoc! {r#"
+            $version: 0.1.0
+            $learn_more: http://data-dict.tidyverse.org/
+            tables:
+              - name: trades
+                columns:
+                  - name: qty
+                    type: number
+        "#},
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("ddl")
+        .arg(&dict)
+        .output()
+        .expect("failed to run dbdict");
+    assert!(!output.status.success(), "legacy must refuse");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("legacy"), "got: {stderr}");
+}

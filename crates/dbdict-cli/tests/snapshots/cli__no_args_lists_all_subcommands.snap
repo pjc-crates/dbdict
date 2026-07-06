@@ -1,5 +1,6 @@
 ---
 source: crates/dbdict-cli/tests/cli.rs
+assertion_line: 18
 expression: stdout
 ---
 Usage: dbdict <COMMAND>
@@ -9,6 +10,7 @@ Commands:
   validate-meta  Validate a dataset's column names and types against a data dictionary
   validate-data  Validate a dataset's values against a data dictionary
   resolve        Print each typedef's canonical DuckDB expansion [default: .]
+  ddl            Print executable DuckDB DDL generated from a data dictionary [default: .]
   spec           Print the dbdict.yaml specification
   types parquet  Print column types for a parquet file
   types duckdb   Print every table's column types from a DuckDB database

@@ -1,0 +1,14 @@
+---
+source: crates/dbdict-cli/tests/cli.rs
+assertion_line: 446
+expression: stdout
+---
+CREATE TYPE "money" AS DECIMAL(18, 4);
+CREATE TYPE "big" AS money[];
+
+CREATE TABLE "trades" (
+  "qty" BIGINT,
+  "prices" big
+);
+
+-- table "memos" skipped: no typed columns

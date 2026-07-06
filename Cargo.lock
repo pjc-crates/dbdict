@@ -652,6 +652,7 @@ version = "0.0.1"
 dependencies = [
  "clap",
  "dbdict",
+ "dbdict-ddl",
  "dbdict-duckdb",
  "dbdict-parquet",
  "duckdb",
@@ -659,6 +660,15 @@ dependencies = [
  "insta",
  "libc",
  "serde_json",
+]
+
+[[package]]
+name = "dbdict-ddl"
+version = "0.0.1"
+dependencies = [
+ "dbdict",
+ "dbdict-duckdb",
+ "quarto-source-map",
 ]
 
 [[package]]

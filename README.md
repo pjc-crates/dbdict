@@ -59,6 +59,7 @@ Commands:
   validate-meta  Validate a dataset's column names and types against a data dictionary
   validate-data  Validate a dataset's values against a data dictionary
   resolve        Print each typedef's canonical DuckDB expansion [default: .]
+  ddl            Print executable DuckDB DDL generated from a data dictionary [default: .]
   spec           Print the dbdict.yaml specification
   types parquet  Print column types for a parquet file
   types duckdb   Print every table's column types from a DuckDB database
@@ -78,6 +79,13 @@ Commands:
 * `resolve` expands every `typedef:` alias to its canonical DuckDB spelling —
   useful while authoring, and for seeing exactly what validation compares. (A
   legacy dictionary has no typedefs, so it resolves to nothing.)
+* `ddl` generates an executable DuckDB script from a rich dictionary —
+  `CREATE TYPE` per typedef (in dependency order), then `CREATE TABLE` per
+  table — printed to stdout for piping into `duckdb`. The script is proven
+  runnable against a scratch in-memory DuckDB before it is printed. Untyped
+  columns are omitted; table-scoped typedefs that shadow another typedef's
+  name can't be spelled in one flat script, so `ddl` refuses with an error
+  naming them.
 * `types duckdb` / `types parquet` print the column types of a data source.
 * `skill read` / `skill write` print embedded agent skills for working with
   data dictionaries, and `spec` prints the full specification.
@@ -116,6 +124,8 @@ consume that model:
   engine, diagnostics. Free of any DuckDB dependency.
 * `crates/dbdict-duckdb/` — DuckDB backend (native bundled `duckdb` crate):
   scratch instantiation, schema reading, typedef expansion.
+* `crates/dbdict-ddl/` — DDL generator: the first generator crate, consuming
+  the lowered model.
 * `crates/dbdict-parquet/` — Parquet backend for the legacy format.
 * `crates/dbdict-cli/` — thin CLI wrapper (binary: `dbdict`).
 

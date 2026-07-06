@@ -32,7 +32,7 @@ pub fn instantiate(dict: &DataDict) -> Instantiated {
     // (not once per table) and at its own span
     let global_conn = open_scratch();
     let global_refs: Vec<&Typedef> = dict.typedefs.iter().collect();
-    for (index, error) in create_types_fixpoint(&global_conn, &global_refs) {
+    for (index, error) in create_types_fixpoint(&global_conn, &global_refs).stalled {
         failures.push(InstantiateFailure::Typedef {
             table: None,
             index,
@@ -70,7 +70,7 @@ fn instantiate_table(
     let effective = effective_typedefs(table, globals);
     // create_types_fixpoint borrows the typedefs, so collect the refs (no clone)
     let refs: Vec<&Typedef> = effective.iter().map(|(_, td)| *td).collect();
-    for (position, error) in create_types_fixpoint(&conn, &refs) {
+    for (position, error) in create_types_fixpoint(&conn, &refs).stalled {
         if let Some(scoped_index) = effective[position].0 {
             failures.push(InstantiateFailure::Typedef {
                 table: Some(table_index),
@@ -173,7 +173,7 @@ pub fn expand_typedefs(dict: &DataDict) -> Vec<TypedefExpansion> {
 
     let conn = open_scratch();
     let global_refs: Vec<&Typedef> = dict.typedefs.iter().collect();
-    let stalled = create_types_fixpoint(&conn, &global_refs);
+    let stalled = create_types_fixpoint(&conn, &global_refs).stalled;
     for (position, td) in dict.typedefs.iter().enumerate() {
         out.push(TypedefExpansion {
             table: None,
@@ -192,7 +192,7 @@ pub fn expand_typedefs(dict: &DataDict) -> Vec<TypedefExpansion> {
         let conn = open_scratch();
         let effective = effective_typedefs(table, &dict.typedefs);
         let refs: Vec<&Typedef> = effective.iter().map(|(_, td)| *td).collect();
-        let stalled = create_types_fixpoint(&conn, &refs);
+        let stalled = create_types_fixpoint(&conn, &refs).stalled;
         for (position, (scoped, td)) in effective.iter().enumerate() {
             let expansion = expansion_result(&conn, td, &stalled, position);
             // an unshadowed global is an echo of the global pass unless this
@@ -306,11 +306,21 @@ fn open_scratch() -> Connection {
         .expect("failed to create the in-memory scratch database")
 }
 
+/// What the `CREATE TYPE` fixpoint produced: which typedefs were created (in
+/// the order their statements succeeded — a valid order for a flat script to
+/// replay) and which stalled.
+struct FixpointOutcome {
+    /// indices into the input slice, in creation order
+    created: Vec<usize>,
+    /// the stalled leftovers — the cyclic/unknown group — as
+    /// `(index, duckdb error)`
+    stalled: Vec<(usize, String)>,
+}
+
 /// Try to `CREATE TYPE` every typedef, retrying the rejects until a full pass
-/// makes no progress. Returns `(index, duckdb error)` for the stalled
-/// leftovers — the cyclic/unknown group — where `index` is the typedef's
-/// position in `typedefs`.
-fn create_types_fixpoint(conn: &Connection, typedefs: &[&Typedef]) -> Vec<(usize, String)> {
+/// makes no progress.
+fn create_types_fixpoint(conn: &Connection, typedefs: &[&Typedef]) -> FixpointOutcome {
+    let mut created = Vec::new();
     let mut pending: Vec<usize> = (0..typedefs.len()).collect();
     loop {
         // each round carries its own error alongside the index, so there is no
@@ -324,17 +334,49 @@ fn create_types_fixpoint(conn: &Connection, typedefs: &[&Typedef]) -> Vec<(usize
                 quote_ident(&td.name.value),
                 td.expr.value
             );
-            if let Err(e) = conn.execute(&sql, []) {
-                failed.push((index, e.to_string()));
+            match conn.execute(&sql, []) {
+                Ok(_) => created.push(index),
+                Err(e) => failed.push((index, e.to_string())),
             }
         }
         // done (nothing failed) or stalled (a full round made no progress):
         // either way the leftovers are final
         if failed.is_empty() || failed.len() == pending.len() {
-            return failed;
+            return FixpointOutcome {
+                created,
+                stalled: failed,
+            };
         }
         pending = failed.into_iter().map(|(index, _)| index).collect();
     }
+}
+
+/// The order in which a flat script can `CREATE TYPE` the given typedefs,
+/// discovered by executing them against a scratch database (the fixpoint
+/// above) rather than by parsing type expressions for dependencies.
+///
+/// `Ok` holds indices into `typedefs` in a creation order that succeeds;
+/// `Err` holds the stalled leftovers (unknown, cyclic, or malformed) as
+/// `(index, duckdb error)`.
+pub fn typedef_creation_order(typedefs: &[&Typedef]) -> Result<Vec<usize>, Vec<(usize, String)>> {
+    let conn = open_scratch();
+    let outcome = create_types_fixpoint(&conn, typedefs);
+    if outcome.stalled.is_empty() {
+        Ok(outcome.created)
+    } else {
+        Err(outcome.stalled)
+    }
+}
+
+/// Execute a multi-statement SQL script in a fresh scratch database and
+/// DESCRIBE every relation it created, alphabetically by name: proof that a
+/// generated script is executable, plus what it builds. Runs with external
+/// access disabled (see [`open_scratch`]), so a hostile script cannot touch
+/// the filesystem or network.
+pub fn execute_and_describe(script: &str) -> Result<Vec<TableSchema>, String> {
+    let conn = open_scratch();
+    conn.execute_batch(script).map_err(|e| e.to_string())?;
+    describe_all(&conn)
 }
 
 /// Read every relation (tables *and* views — a dictionary table may
@@ -345,10 +387,17 @@ fn create_types_fixpoint(conn: &Connection, typedefs: &[&Typedef]) -> Vec<(usize
 /// locked for writing.
 pub fn read_schema(db_file: &Path) -> Result<Vec<TableSchema>, String> {
     let conn = open_read_only(db_file)?;
+    describe_all(&conn)
+}
+
+/// Every relation in the connection's database, alphabetically, each with its
+/// canonical column types. Shared by [`read_schema`] (the real database) and
+/// [`execute_and_describe`] (a scratch database a script just built).
+fn describe_all(conn: &Connection) -> Result<Vec<TableSchema>, String> {
     let mut schema = Vec::new();
-    for name in relation_names(&conn)? {
+    for name in relation_names(conn)? {
         schema.push(TableSchema {
-            columns: describe(&conn, &name)?,
+            columns: describe(conn, &name)?,
             name,
         });
     }
@@ -411,8 +460,9 @@ fn query_count(conn: &Connection, sql: &str) -> Result<usize, String> {
 }
 
 /// Double-quote a DuckDB identifier, escaping embedded quotes, so a name (or
-/// a typedef alias used as a type) is never parsed as SQL syntax.
-fn quote_ident(name: &str) -> String {
+/// a typedef alias used as a type) is never parsed as SQL syntax. Public
+/// because the DDL generator spells identifiers the same way.
+pub fn quote_ident(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 

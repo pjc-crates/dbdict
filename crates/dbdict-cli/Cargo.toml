@@ -14,6 +14,7 @@ path = "src/main.rs"
 dbdict.workspace = true
 dbdict-parquet.workspace = true
 dbdict-duckdb.workspace = true
+dbdict-ddl.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 

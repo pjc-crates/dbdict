@@ -82,11 +82,11 @@ replaces the `RichFormatUnsupported` pre-flight with real data checks.
   validate-data` on the seeded fixture reports D01 + D02, exits 1; clean
   fixture exits 0; legacy parquet fixtures unchanged — PASSED
 
-### phase 3: DDL generator — crates/dbdict-ddl + `dbdict ddl`
+### phase 3: DDL generator — crates/dbdict-ddl + `dbdict ddl` — DONE 2026-07-06T15:38:31+12:00
 first generator; pressure-tests the public `load_and_lower` model API.
 
-- [ ] new crate `crates/dbdict-ddl` (workspace member): library exposing
-      `generate(dict: &DataDict) -> Result<String, ...>` producing
+- [x] new crate `crates/dbdict-ddl` (workspace member): library exposing
+      `generate(dict: &DataDict) -> Result<String, DdlError>` producing
       executable DuckDB DDL — `CREATE TYPE` per typedef then `CREATE TABLE`
       per table — consuming the lowered model only (never YAML, never the CLI)
 
@@ -104,17 +104,35 @@ first generator; pressure-tests the public `load_and_lower` model API.
 > clear error listing the shadowing typedefs and refuse to generate,
 > rather than inventing a renaming scheme nobody asked for yet.
 
-- [ ] round-trip self-check inside generation or tests: execute the
-      generated script against a fresh in-memory DuckDB and diff canonical
-      `DESCRIBE` output against the dict's own instantiation (the
-      validate-meta trick) — proves the script is executable and faithful
-- [ ] wire `dbdict ddl <dict>` in crates/dbdict-cli/src/main.rs: thin flat
+- [x] round-trip self-check inside generation *and* tests: `generate`
+      executes the assembled script against a fresh in-memory DuckDB
+      (sandboxed, external access off) so an `Ok` script is proven
+      runnable — a bad column type refuses with `ScriptFailed` instead of
+      failing the user downstream; the faithfulness half (canonical
+      `DESCRIBE` diff against the dict's own instantiation) is asserted
+      in tests
+- [x] wire `dbdict ddl <dict>` in crates/dbdict-cli/src/main.rs: thin flat
       subcommand printing the script to stdout; problems (load errors,
       shadowing refusal) go to stderr with nonzero exit like other commands
-- [ ] docs: short `ddl` section in README.md and site (wherever resolve /
-      types duckdb are documented)
-- [ ] tests: dbdict-ddl round-trip integration tests (typedef chains,
-      structs/enums/decimals/arrays, shadowing refusal); cli e2e snapshot
-- **verify:** `cargo test --workspace` green; `dbdict ddl` output piped
-  into `duckdb` scratch recreates a schema whose DESCRIBE matches
-  `dbdict resolve`; `cargo clippy --workspace` + `cargo fmt --check` clean
+- [x] docs: short `ddl` section in README.md (CLI listing + bullet + crate
+      list) and site/spec.md typedefs section (next to `dbdict resolve`;
+      the site has no dedicated CLI page — README is the CLI surface)
+- [x] tests: 13 dbdict-ddl round-trip integration tests (typedef chains,
+      structs/enums/decimals/arrays, shadowing refusal incl. ASCII-case
+      fold and cross-table, stalled typedefs, hostile identifiers, empty
+      dict); 7 backend-helper tests; 3 cli e2e (snapshot, shadowing
+      refusal, legacy refusal)
+- also: backend seam grew three pub exports in dbdict-duckdb —
+      `quote_ident`, `typedef_creation_order` (the fixpoint now records
+      success order, previously discarded), `execute_and_describe` — so
+      dbdict-ddl never names `duckdb::Connection`
+- also: `DdlError::LegacyUnsupported` — `ddl` refuses 0.1.0 dictionaries
+      (coarse semantic types are not duckdb types)
+- also: untyped columns are omitted (they make no type claim, matching
+      instantiation); a table with no typed columns is skipped with a SQL
+      comment in the script rather than silently or with an error
+- **verify:** `cargo test --workspace` green (248 passed); `dbdict ddl`
+  output piped into the real `duckdb` CLI built a database that
+  `validate-meta` (same dict) accepts cleanly and whose DESCRIBE matches
+  `dbdict resolve`; `cargo clippy --workspace` + `cargo fmt --check`
+  clean — PASSED

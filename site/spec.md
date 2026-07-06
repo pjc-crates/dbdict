@@ -101,6 +101,14 @@ or a malformed expression — is reported with DuckDB's own error at the
 typedef's definition (see M08 in [Validation](validation.md)). Run
 `dbdict resolve` to print every alias's canonical expansion.
 
+The dictionary is executable in the other direction too: `dbdict ddl`
+generates a flat DuckDB script — `CREATE TYPE` per typedef in dependency
+order, then `CREATE TABLE` per table — proven runnable against a scratch
+in-memory database before it is printed. Because `CREATE TYPE` names are
+database-global, a table-scoped alias that shadows another alias's name
+cannot be spelled in one flat script; `ddl` refuses with an error naming the
+colliding typedefs rather than renaming them for you.
+
 ## Source
 
 `source` names the data the dictionary describes: one dictionary describes one

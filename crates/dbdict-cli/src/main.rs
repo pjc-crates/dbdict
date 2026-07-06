@@ -21,6 +21,8 @@ enum Command {
     ValidateData(ValidateArgs),
     /// Print each typedef's canonical DuckDB expansion [default: .]
     Resolve { dict: Option<PathBuf> },
+    /// Print executable DuckDB DDL generated from a data dictionary [default: .]
+    Ddl { dict: Option<PathBuf> },
     /// Print the dbdict.yaml specification
     Spec,
     /// Inspect data types of a data source
@@ -119,6 +121,7 @@ fn main() -> ExitCode {
             dbdict::validate_data(path, table, &dbdict_duckdb::NativeDuckdb)
         }),
         Command::Resolve { dict } => run_resolve(dict),
+        Command::Ddl { dict } => run_ddl(dict),
         Command::Spec => {
             print!("{}", dbdict::SPEC_MD);
             ExitCode::SUCCESS
@@ -287,6 +290,44 @@ fn run_resolve(dict: Option<PathBuf>) -> ExitCode {
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS
+            }
+        }
+    }
+}
+
+/// Run `ddl`: load and lower the dictionary, generate the DuckDB DDL script,
+/// and print it to stdout. Problems — load errors, typedef shadowing, a
+/// script that fails its scratch self-check — go to stderr with a nonzero
+/// exit, like the other commands.
+fn run_ddl(dict: Option<PathBuf>) -> ExitCode {
+    let dict_path = match resolve_dict_path(dict) {
+        Ok(dict_path) => dict_path,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match dbdict::load_and_lower(&dict_path) {
+        Err(problems) => {
+            for line in problems.render() {
+                eprintln!("{line}");
+            }
+            ExitCode::FAILURE
+        }
+        Ok((problems, dict)) => {
+            // an Ok load can still carry warnings — keep them visible
+            for line in problems.render() {
+                eprintln!("{line}");
+            }
+            match dbdict_ddl::generate(&dict) {
+                Ok(script) => {
+                    print!("{script}");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
             }
         }
     }
