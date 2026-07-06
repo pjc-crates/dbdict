@@ -1,0 +1,23 @@
+---
+source: crates/dbdict/tests/rich.rs
+assertion_line: 447
+---
+$version: "0.2.0"
+$learn_more: http://data-dict.tidyverse.org/
+tables:
+  - name: food
+    columns:
+      - name: id
+        type: BIGINT
+  - name: Food
+    columns:
+      - name: id
+        type: BIGINT
+────────────────────────────────────────
+error: [S10] Table names must be unique within the dictionary (DuckDB identifiers are case-insensitive).
+ --> dict.yaml:8:11
+  |
+4 |   - name: food
+...
+8 |   - name: Food
+  |           ^^^^ is duplicated

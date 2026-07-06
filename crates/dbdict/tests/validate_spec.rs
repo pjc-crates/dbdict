@@ -896,3 +896,27 @@ fn s15_bad_time_zone() {
     #[cfg(unix)]
     assert_snapshot!(diagnostic);
 }
+
+// legacy S10 stays *exact*: the legacy path targets parquet, whose column
+// names are case-sensitive — `Id` and `id` can genuinely coexist there, so
+// case-folding (which the rich path does for duckdb) must not leak in.
+// locks existing behaviour; passes from day one by design
+#[test]
+fn s10_legacy_names_differing_by_case_are_distinct() {
+    assert_valid_dict(indoc! {"
+        tables:
+          - name: food
+            columns:
+              - name: id
+                type: number(id)
+                examples: [1, 2, 3]
+              - name: Id
+                type: string
+                examples: [a, b, c]
+          - name: Food
+            columns:
+              - name: id
+                type: number(id)
+                examples: [1, 2, 3]
+    "});
+}

@@ -278,3 +278,39 @@ fn strip_terminal_escapes(s: &str) -> String {
     }
     String::from_utf8(out).expect("stripping ASCII escapes preserves UTF-8")
 }
+
+/// Closing the read end of a pipe mid-output (`dbdict spec | head`) must not
+/// panic. Rust's runtime ignores SIGPIPE before `main`, so `println!` sees
+/// EPIPE and panics with "failed printing to stdout"; the binary restores the
+/// default SIGPIPE disposition so it dies quietly like other unix CLIs.
+///
+/// The read end is closed immediately after spawn — before the child gets
+/// through startup — so its very first write hits the closed pipe.
+#[cfg(unix)]
+#[test]
+fn spec_dies_quietly_when_stdout_pipe_closes() {
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("spec")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn dbdict");
+    drop(child.stdout.take()); // close the read end, like `head -1` exiting
+    let output = child.wait_with_output().expect("failed to wait for dbdict");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("panic"),
+        "dbdict panicked on a closed pipe:\n{stderr}"
+    );
+    // dying of SIGPIPE (signal 13) is the classic quiet death; finishing all
+    // writes before the close (clean exit) would also be fine
+    assert!(
+        output.status.signal() == Some(13) || output.status.success(),
+        "unexpected exit status: {:?}",
+        output.status
+    );
+}

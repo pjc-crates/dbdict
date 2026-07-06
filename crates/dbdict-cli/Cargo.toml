@@ -17,6 +17,11 @@ dbdict-duckdb.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 
+# restore the default SIGPIPE disposition in main (see reset_sigpipe there);
+# unix-only — windows has no SIGPIPE
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 insta = "1"
 indoc = "2"

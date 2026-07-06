@@ -423,3 +423,43 @@ fn legacy_version_rejects_top_level_source() {
         errors.join("\n")
     );
 }
+
+// --- S10 case folding (rich only) ------------------------------------------
+
+// duckdb identifiers are case-insensitive, so two rich tables whose names
+// differ only in case cannot both exist in the dictionary's database — S10
+// folds ASCII case for rich documents (matching `names_eq` at the meta level)
+#[test]
+fn s10_rich_table_names_colliding_by_case() {
+    let d = failing_rich(indoc! {"
+        tables:
+          - name: food
+            columns:
+              - name: id
+                type: BIGINT
+          - name: Food
+            columns:
+              - name: id
+                type: BIGINT
+    "});
+    d.assert_contains(&["S10", "Table names must be unique"]);
+    #[cfg(unix)]
+    assert_snapshot!(d);
+}
+
+// same folding for column names within a table
+#[test]
+fn s10_rich_column_names_colliding_by_case() {
+    let d = failing_rich(indoc! {"
+        tables:
+          - name: food
+            columns:
+              - name: id
+                type: BIGINT
+              - name: ID
+                type: VARCHAR
+    "});
+    d.assert_contains(&["S10", "Column names must be unique"]);
+    #[cfg(unix)]
+    assert_snapshot!(d);
+}

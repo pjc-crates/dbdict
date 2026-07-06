@@ -66,7 +66,27 @@ enum TypesCommand {
     Duckdb { path: PathBuf },
 }
 
+/// Rust's runtime sets SIGPIPE to SIG_IGN before `main`, so writing to a
+/// closed pipe (`dbdict spec | head`) surfaces as an EPIPE error that makes
+/// `println!` panic. Restoring SIG_DFL means the process instead dies quietly
+/// with SIGPIPE, like other unix CLIs producing textual output.
+///
+/// `unsafe`: `libc::signal` is a raw C call; safe here because it runs first
+/// thing in `main`, before any other thread or signal machinery exists.
+#[cfg(unix)]
+fn reset_sigpipe() {
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn reset_sigpipe() {
+    // windows has no SIGPIPE; nothing to restore
+}
+
 fn main() -> ExitCode {
+    reset_sigpipe();
     let cli = Cli::parse();
     let Some(command) = cli.command else {
         print_all_subcommands();

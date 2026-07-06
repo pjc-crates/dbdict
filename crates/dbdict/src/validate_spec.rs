@@ -235,10 +235,16 @@ fn check_spec(dict: &DataDict, out: &mut ProblemSet) {
     validate_s06_cardinality_consistency(dict, out);
     validate_s16_single_table_description(dict, out);
 
+    // rich names live in duckdb, whose identifiers are case-insensitive: two
+    // names differing only in ASCII case cannot coexist in the database, so
+    // S10 folds case for rich documents (matching `names_eq` at the meta
+    // level). legacy names live in parquet, where names are case-sensitive,
+    // so the legacy format keeps exact matching
+    let fold_case = dict.format == Format::Rich;
     let mut seen_tables: HashMap<String, SourceInfo> = HashMap::new();
     for table in &dict.tables {
         if validate_s11_table_name(table, out) {
-            validate_s10_unique_table_name(table, &mut seen_tables, out);
+            validate_s10_unique_table_name(table, fold_case, &mut seen_tables, out);
         }
         let mut seen: HashMap<String, SourceInfo> = HashMap::new();
         for col in &table.columns {
@@ -258,7 +264,7 @@ fn check_spec(dict: &DataDict, out: &mut ProblemSet) {
             }
             validate_s15_time_zone_format(table, col, out);
             if validate_s11_column_name(table, col, out) {
-                validate_s10_unique_name(table, col, &mut seen, out);
+                validate_s10_unique_name(table, col, fold_case, &mut seen, out);
             }
             if coarse_types
                 && validate_s07_representation(table, col, out)
@@ -781,13 +787,15 @@ fn validate_s15_time_zone_format(table: &Table, col: &Column, out: &mut ProblemS
 fn validate_s10_unique_name(
     table: &Table,
     col: &Column,
+    fold_case: bool,
     seen: &mut HashMap<String, SourceInfo>,
     out: &mut ProblemSet,
 ) {
-    match seen.get(&col.name.value) {
+    let key = s10_key(&col.name.value, fold_case);
+    match seen.get(&key) {
         Some(first) => out.push_spec_error(
             "S10",
-            "Column names must be unique within a table.",
+            s10_column_message(fold_case),
             "is duplicated",
             [
                 table.name.span.clone(),
@@ -796,25 +804,53 @@ fn validate_s10_unique_name(
             ],
         ),
         None => {
-            seen.insert(col.name.value.clone(), col.name.span.clone());
+            seen.insert(key, col.name.span.clone());
         }
+    }
+}
+
+/// the key names are deduplicated under: exact for legacy (parquet is
+/// case-sensitive), ASCII-lowercased for rich (duckdb folds identifier case;
+/// same folding as `names_eq` in the meta level — duckdb's own Unicode
+/// folding is deliberately not replicated)
+fn s10_key(name: &str, fold_case: bool) -> String {
+    if fold_case {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_string()
+    }
+}
+
+fn s10_column_message(fold_case: bool) -> &'static str {
+    if fold_case {
+        // rich collisions may differ in case, so say why they still collide
+        "Column names must be unique within a table (DuckDB identifiers are case-insensitive)."
+    } else {
+        "Column names must be unique within a table."
     }
 }
 
 fn validate_s10_unique_table_name(
     table: &Table,
+    fold_case: bool,
     seen: &mut HashMap<String, SourceInfo>,
     out: &mut ProblemSet,
 ) {
-    match seen.get(&table.name.value) {
+    let key = s10_key(&table.name.value, fold_case);
+    let message = if fold_case {
+        "Table names must be unique within the dictionary (DuckDB identifiers are case-insensitive)."
+    } else {
+        "Table names must be unique within the dictionary."
+    };
+    match seen.get(&key) {
         Some(first) => out.push_spec_error(
             "S10",
-            "Table names must be unique within the dictionary.",
+            message,
             "is duplicated",
             [first.clone(), table.name.span.clone()],
         ),
         None => {
-            seen.insert(table.name.value.clone(), table.name.span.clone());
+            seen.insert(key, table.name.span.clone());
         }
     }
 }
