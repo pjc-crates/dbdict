@@ -317,19 +317,28 @@ fn spec_dies_quietly_when_stdout_pipe_closes() {
 
 /// The rich data level through the binary: seeded D01 (nulls in a required
 /// column), D02 (duplicated primary key), D03 (duplicated value in a `unique`
-/// column), and D04 (orphaned `foreign_key` value) violations all report,
-/// with their codes, and fail the run.
+/// column), D04 (orphaned `foreign_key` value), and D05 (cardinality
+/// violation on a range join, where one trade date falls inside two
+/// overlapping periods) violations all report, with their codes, and fail
+/// the run. The other two trade dates match exactly one and zero periods —
+/// neither violates, so the D05 count stays at 1.
 #[test]
-fn validate_data_rich_reports_d01_through_d04() {
+fn validate_data_rich_reports_d01_through_d05() {
     let dir = temp_fixture_dir("rich-data");
 
     let conn = duckdb::Connection::open(dir.join("warehouse.duckdb")).expect("create db");
     conn.execute_batch(
-        "CREATE TABLE trades (id BIGINT, qty BIGINT, ref VARCHAR, cat_id BIGINT);
+        "CREATE TABLE trades (id BIGINT, qty BIGINT, ref VARCHAR, cat_id BIGINT, ts DATE);
          INSERT INTO trades VALUES
-           (1, 10, 'ord-1', 1), (1, NULL, 'ord-1', 1), (2, 20, 'ord-2', 99);
+           (1, 10, 'ord-1', 1, DATE '2024-01-05'),
+           (1, NULL, 'ord-1', 1, DATE '2024-02-15'),
+           (2, 20, 'ord-2', 99, DATE '2024-01-20');
          CREATE TABLE categories (id BIGINT);
-         INSERT INTO categories VALUES (1);",
+         INSERT INTO categories VALUES (1);
+         CREATE TABLE periods (start DATE, \"end\" DATE);
+         INSERT INTO periods VALUES
+           (DATE '2024-01-01', DATE '2024-01-31'),
+           (DATE '2024-01-04', DATE '2024-01-10');",
     )
     .expect("create fixture");
     drop(conn); // flush and close before the binary opens it read-only
@@ -358,13 +367,24 @@ fn validate_data_rich_reports_d01_through_d04() {
                   - name: cat_id
                     type: BIGINT
                     constraints: [foreign_key]
+                  - name: ts
+                    type: DATE
               - name: categories
                 columns:
                   - name: id
                     type: BIGINT
                     constraints: [primary_key]
+              - name: periods
+                columns:
+                  - name: start
+                    type: DATE
+                    constraints: [unique]
+                  - name: end
+                    type: DATE
             relationships:
               - join: trades.cat_id = categories.id
+                cardinality: many-to-one
+              - join: trades.ts >= periods.start AND trades.ts <= periods.end
                 cardinality: many-to-one
         "#},
     )
@@ -385,18 +405,27 @@ fn validate_data_rich_reports_d01_through_d04() {
 /// end to end that D03 follows SQL UNIQUE semantics (NULLs compare as
 /// distinct, so an optional-but-unique column may hold many). The
 /// `foreign_key` column holds present values plus a NULL — locking end to end
-/// that D04 excludes NULLs (MATCH SIMPLE: NULL means "no reference").
+/// that D04 excludes NULLs (MATCH SIMPLE: NULL means "no reference"). The
+/// range join's periods don't overlap, and the row with a NULL `ts` matches
+/// nothing — locking end to end that D05 passes NULL join columns (SQL
+/// comparison semantics) and never treats zero matches as a violation.
 #[test]
 fn validate_data_rich_clean_passes() {
     let dir = temp_fixture_dir("rich-data-clean");
 
     let conn = duckdb::Connection::open(dir.join("warehouse.duckdb")).expect("create db");
     conn.execute_batch(
-        "CREATE TABLE trades (id BIGINT, qty BIGINT, ref VARCHAR, cat_id BIGINT);
+        "CREATE TABLE trades (id BIGINT, qty BIGINT, ref VARCHAR, cat_id BIGINT, ts DATE);
          INSERT INTO trades VALUES
-           (1, 10, 'ord-1', 1), (2, 20, NULL, 2), (3, 30, NULL, NULL);
+           (1, 10, 'ord-1', 1, DATE '2024-01-05'),
+           (2, 20, NULL, 2, DATE '2024-01-15'),
+           (3, 30, NULL, NULL, NULL);
          CREATE TABLE categories (id BIGINT);
-         INSERT INTO categories VALUES (1), (2);",
+         INSERT INTO categories VALUES (1), (2);
+         CREATE TABLE periods (start DATE, \"end\" DATE);
+         INSERT INTO periods VALUES
+           (DATE '2024-01-01', DATE '2024-01-10'),
+           (DATE '2024-01-11', DATE '2024-01-20');",
     )
     .expect("create fixture");
     drop(conn);
@@ -425,13 +454,24 @@ fn validate_data_rich_clean_passes() {
                   - name: cat_id
                     type: BIGINT
                     constraints: [foreign_key]
+                  - name: ts
+                    type: DATE
               - name: categories
                 columns:
                   - name: id
                     type: BIGINT
                     constraints: [primary_key]
+              - name: periods
+                columns:
+                  - name: start
+                    type: DATE
+                    constraints: [unique]
+                  - name: end
+                    type: DATE
             relationships:
               - join: trades.cat_id = categories.id
+                cardinality: many-to-one
+              - join: trades.ts >= periods.start AND trades.ts <= periods.end
                 cardinality: many-to-one
         "#},
     )

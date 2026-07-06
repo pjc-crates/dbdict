@@ -85,17 +85,25 @@
   second probe, NULL-join-column pass, self-join, and both-tables
   quoting)
 
-### phase 2: CLI e2e + docs
-- [ ] extend the rich-data CLI e2e fixtures (crates/dbdict-cli/tests/cli.rs):
+### phase 2: CLI e2e + docs — DONE 2026-07-07T10:27:05+12:00
+- [x] extend the rich-data CLI e2e fixtures (crates/dbdict-cli/tests/cli.rs):
       seeded fixture gains a `periods` table with *overlapping ranges*
       and a `many-to-one` range relationship → snapshot shows
       D01+D02+D03+D04+D05, D05 anchored at the relationship (test
       renamed to `..._d01_through_d05`; old snapshot deleted with the
       rename; .snap.new reviewed before accepting); clean fixture gains
       the same shape with non-overlapping ranges → still exits 0
-- [ ] README.md: validate-data bullet mentions cardinality violations
+- also: the seeded fixture's three trade dates cover over-match (D05,
+      count 1), exact match, and zero match — locking zero-matches-pass
+      end to end; `periods.start` is `unique` per the plan (S06's
+      permissive range rule satisfied, snapshot stays D-level only) and
+      picks up D03 coverage on a second table for free
+- also: the clean fixture's third row carries a NULL `ts` (alongside its
+      NULL fk) — locking D05's NULL-join-column pass end to end, the
+      same "lock semantics, not just behavior" pattern as D04's phase 2
+- [x] README.md: validate-data bullet mentions cardinality violations
       (D05) alongside D01–D04
-- [ ] site/spec.md: the relationships section's `cardinality` bullet
+- [x] site/spec.md: the relationships section's `cardinality` bullet
       points at D05 in validation.md (the D03/D04 cross-reference
       pattern)
 - **verify:** `cargo test --workspace` green; snapshots reviewed before

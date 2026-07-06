@@ -75,8 +75,9 @@ Commands:
 * `validate-meta` compares a dictionary against its database's column names
   and types; `validate-data` also checks values — nulls in `required` columns
   (D01), duplicated `primary_key` values (D02), duplicated values in `unique`
-  columns (D03), and orphaned `foreign_key` values (D04). The data is located
-  through the dictionary's `source`, so only the dictionary is passed.
+  columns (D03), orphaned `foreign_key` values (D04), and relationship
+  `cardinality` violations (D05). The data is located through the
+  dictionary's `source`, so only the dictionary is passed.
 * `resolve` expands every `typedef:` alias to its canonical DuckDB spelling —
   useful while authoring, and for seeing exactly what validation compares. (A
   legacy dictionary has no typedefs, so it resolves to nothing.)

@@ -383,7 +383,8 @@ tables are related.
   `table1.date >= table2.start AND table1.date <= table2.end`.
 * `cardinality` (required): either `one-to-one`, `one-to-many`, or
   `many-to-one`. Describes the relationship from the left table to the right
-  table in the join expression.
+  table in the join expression. `dbdict validate-data` checks the declared
+  cardinality against the data (see D05 in [Validation](validation.md)).
 * `description`: human-readable description of the relationship. Only needed if
   it's not clear from the context.
 * `conflicts`: a list of column names that appear in both tables with different

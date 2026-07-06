@@ -1,6 +1,6 @@
 ---
 source: crates/dbdict-cli/tests/cli.rs
-assertion_line: 380
+assertion_line: 400
 expression: "sanitize(&stderr, &dict.display().to_string())"
 ---
 error: [D01] A required column must not contain nulls.
@@ -37,3 +37,9 @@ error: [D04] A foreign key value must exist in the primary key it references.
 19 |         type: BIGINT
 20 |         constraints: [foreign_key]
    |                       ^^^^^^^^^^^ has 1 orphaned value (no match in categories.id)
+error: [D05] A relationship's declared cardinality must hold in the data.
+  --> <fixture>:39:18
+   |
+38 |   - join: trades.ts >= periods.start AND trades.ts <= periods.end
+39 |     cardinality: many-to-one
+   |                  ^^^^^^^^^^^ has 1 `trades` row matching more than one `periods` row (declared `many-to-one`)
