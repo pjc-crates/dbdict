@@ -274,6 +274,17 @@ impl dbdict::rich::DuckdbBackend for NativeDuckdb {
     ) -> Result<usize, String> {
         count_duplicate_values(db_file, table, column)
     }
+
+    fn count_orphaned_values(
+        &self,
+        db_file: &Path,
+        fk_table: &str,
+        fk_column: &str,
+        pk_table: &str,
+        pk_column: &str,
+    ) -> Result<usize, String> {
+        count_orphaned_values(db_file, fk_table, fk_column, pk_table, pk_column)
+    }
 }
 
 /// Classify a canonical type spelling (as `DESCRIBE` returns it) for the
@@ -469,6 +480,36 @@ pub fn count_duplicate_values(db_file: &Path, table: &str, column: &str) -> Resu
     let sql = format!(
         "SELECT count(*) FROM (SELECT 1 FROM {} WHERE {col} IS NOT NULL GROUP BY {col} HAVING count(*) > 1)",
         quote_ident(table)
+    );
+    query_count(&conn, &sql)
+}
+
+/// D04 — how many distinct non-NULL values of `fk_table.fk_column` do not
+/// exist in `pk_table.pk_column`. NULL foreign keys are filtered out first:
+/// SQL `MATCH SIMPLE` semantics, where a NULL fk means "no reference".
+///
+/// The lookup is `NOT EXISTS` (an anti-join), deliberately not `NOT IN`:
+/// with `NOT IN`, a single NULL in the primary-key column makes the
+/// predicate NULL (neither true nor false) for every candidate, and the
+/// query silently reports zero orphans. `NOT EXISTS` only asks "is there a
+/// matching row", so NULL pk rows simply never match. The `f`/`p` aliases
+/// also keep a self-join (fk and pk in the same table) unambiguous.
+pub fn count_orphaned_values(
+    db_file: &Path,
+    fk_table: &str,
+    fk_column: &str,
+    pk_table: &str,
+    pk_column: &str,
+) -> Result<usize, String> {
+    let conn = open_read_only(db_file)?;
+    let fk_col = quote_ident(fk_column);
+    let pk_col = quote_ident(pk_column);
+    let sql = format!(
+        "SELECT count(DISTINCT f.{fk_col}) FROM {} f \
+         WHERE f.{fk_col} IS NOT NULL \
+         AND NOT EXISTS (SELECT 1 FROM {} p WHERE p.{pk_col} = f.{fk_col})",
+        quote_ident(fk_table),
+        quote_ident(pk_table),
     );
     query_count(&conn, &sql)
 }

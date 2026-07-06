@@ -183,6 +183,13 @@ pub enum ProblemKind {
     /// values are duplicated. NULLs are excluded, per SQL `UNIQUE`
     /// semantics (see `site/validation.md`).
     DuplicateValues { count: usize },
+    /// `D04` (rich format) — a `foreign_key` column has non-NULL values that
+    /// do not exist in the `primary_key` column a relationship pairs it
+    /// with; `count` is how many distinct values are orphaned. NULLs are
+    /// excluded, per SQL `MATCH SIMPLE` semantics (see `site/validation.md`).
+    /// Every declared fk→pk pairing is checked independently, so a column
+    /// with two targets can carry two of these.
+    OrphanedValues { count: usize },
 }
 
 impl ProblemKind {
@@ -203,6 +210,7 @@ impl ProblemKind {
             ProblemKind::NullsInRequired { .. } => "D01",
             ProblemKind::DuplicateKey { .. } => "D02",
             ProblemKind::DuplicateValues { .. } => "D03",
+            ProblemKind::OrphanedValues { .. } => "D04",
             _ => return None,
         })
     }
@@ -223,7 +231,8 @@ impl ProblemKind {
             | ProblemKind::InvalidColumnType => Level::Meta,
             ProblemKind::NullsInRequired { .. }
             | ProblemKind::DuplicateKey { .. }
-            | ProblemKind::DuplicateValues { .. } => Level::Data,
+            | ProblemKind::DuplicateValues { .. }
+            | ProblemKind::OrphanedValues { .. } => Level::Data,
             _ => return None,
         })
     }

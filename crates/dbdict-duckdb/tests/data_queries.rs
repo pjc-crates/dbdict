@@ -164,3 +164,114 @@ fn quoted_identifiers_are_inert() {
         Ok(1)
     );
 }
+
+#[test]
+fn counts_orphaned_foreign_key_values() {
+    // 5 (twice) and 7 have no match in categories: two distinct orphans
+    let file = build_db(
+        "CREATE TABLE categories (id BIGINT);
+         INSERT INTO categories VALUES (1), (2);
+         CREATE TABLE trades (cat_id BIGINT);
+         INSERT INTO trades VALUES (1), (2), (5), (5), (7);",
+    );
+    assert_eq!(
+        dbdict_duckdb::count_orphaned_values(&file, "trades", "cat_id", "categories", "id"),
+        Ok(2)
+    );
+}
+
+/// the D04 NULL-exclusion lock: a NULL foreign key means "no reference"
+/// (SQL MATCH SIMPLE), not an orphan
+#[test]
+fn null_foreign_keys_are_not_orphans() {
+    let file = build_db(
+        "CREATE TABLE categories (id BIGINT);
+         INSERT INTO categories VALUES (1);
+         CREATE TABLE trades (cat_id BIGINT);
+         INSERT INTO trades VALUES (1), (NULL), (NULL);",
+    );
+    assert_eq!(
+        dbdict_duckdb::count_orphaned_values(&file, "trades", "cat_id", "categories", "id"),
+        Ok(0)
+    );
+}
+
+/// the anti-join lock: with `NOT IN`, a single NULL in the *primary key*
+/// column makes the predicate NULL for every candidate and silently reports
+/// zero orphans — the query must stay null-safe
+#[test]
+fn nulls_in_the_primary_key_column_do_not_mask_orphans() {
+    let file = build_db(
+        "CREATE TABLE categories (id BIGINT);
+         INSERT INTO categories VALUES (1), (NULL);
+         CREATE TABLE trades (cat_id BIGINT);
+         INSERT INTO trades VALUES (1), (9);",
+    );
+    assert_eq!(
+        dbdict_duckdb::count_orphaned_values(&file, "trades", "cat_id", "categories", "id"),
+        Ok(1)
+    );
+}
+
+/// a self-join fk (a hierarchy): the same table on both sides of the query
+#[test]
+fn self_join_orphans_are_counted() {
+    // manager 99 does not exist as an id
+    let file = build_db(
+        "CREATE TABLE employees (id BIGINT, manager_id BIGINT);
+         INSERT INTO employees VALUES (1, NULL), (2, 1), (3, 99);",
+    );
+    assert_eq!(
+        dbdict_duckdb::count_orphaned_values(&file, "employees", "manager_id", "employees", "id"),
+        Ok(1)
+    );
+}
+
+#[test]
+fn orphaned_values_match_identifiers_case_insensitively() {
+    let file = build_db(
+        "CREATE TABLE Categories (Id BIGINT);
+         INSERT INTO Categories VALUES (1);
+         CREATE TABLE Trades (Cat_Id BIGINT);
+         INSERT INTO Trades VALUES (1), (9);",
+    );
+    assert_eq!(
+        dbdict_duckdb::count_orphaned_values(&file, "trades", "cat_id", "categories", "id"),
+        Ok(1)
+    );
+}
+
+#[test]
+fn orphaned_values_on_a_missing_column_is_an_error() {
+    let file = build_db(
+        "CREATE TABLE categories (id BIGINT);
+         CREATE TABLE trades (cat_id BIGINT);",
+    );
+    let result =
+        dbdict_duckdb::count_orphaned_values(&file, "trades", "no_such", "categories", "id");
+    assert!(result.is_err(), "got {result:?}");
+    let result =
+        dbdict_duckdb::count_orphaned_values(&file, "trades", "cat_id", "categories", "no_such");
+    assert!(result.is_err(), "got {result:?}");
+}
+
+/// quoting keeps hostile names inert on *both* sides of the anti-join
+#[test]
+fn orphan_query_quotes_both_tables() {
+    let file = build_db(
+        r#"CREATE TABLE "cat""egories; DROP TABLE x" ("i""d" BIGINT);
+           INSERT INTO "cat""egories; DROP TABLE x" VALUES (1);
+           CREATE TABLE "tra""des" ("cat""_id" BIGINT);
+           INSERT INTO "tra""des" VALUES (1), (9);"#,
+    );
+    assert_eq!(
+        dbdict_duckdb::count_orphaned_values(
+            &file,
+            r#"tra"des"#,
+            r#"cat"_id"#,
+            r#"cat"egories; DROP TABLE x"#,
+            r#"i"d"#,
+        ),
+        Ok(1)
+    );
+}

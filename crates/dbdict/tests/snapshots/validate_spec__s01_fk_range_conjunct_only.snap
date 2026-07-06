@@ -1,0 +1,46 @@
+---
+source: crates/dbdict/tests/validate_spec.rs
+assertion_line: 354
+---
+# expected: S01
+# `event.period_id` is marked `foreign_key` and a relationship joins it to
+# the `primary_key` column `period.id` — but only by a *range* conjunct.
+# A range predicate relates two columns without referencing one from the
+# other, so it cannot resolve a foreign key: S01 must still fire.
+# (Cardinality is many-to-one with `period.id` as the "one" side, so S06
+# stays quiet and the diagnostic isolates S01.)
+
+$version: "0.1.0"
+
+tables:
+  - name: event
+    columns:
+      - name: id
+        type: number(id)
+        constraints: [primary_key]
+        examples: [1, 2]
+      - name: period_id
+        type: number(id)
+        constraints: [foreign_key]
+        examples: [1, 2]
+
+  - name: period
+    columns:
+      - name: id
+        type: number(id)
+        constraints: [primary_key]
+        examples: [1, 2]
+
+relationships:
+  - join: event.period_id >= period.id
+    cardinality: many-to-one
+────────────────────────────────────────
+error: [S01] Every `foreign_key` column must have a matching relationship to a `primary_key`.
+  --> spec/s01-fk-range-conjunct-only.yaml:20:21
+   |
+12 |   - name: event
+...
+18 |       - name: period_id
+19 |         type: number(id)
+20 |         constraints: [foreign_key]
+   |                     ^^^^^^^^^^^ is `foreign_key` but no relationship points it at a `primary_key`

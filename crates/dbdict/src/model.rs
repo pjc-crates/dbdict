@@ -69,6 +69,55 @@ impl DataDict {
     pub fn table(&self, name: &str) -> Option<&Table> {
         self.tables.iter().find(|t| t.name.value == name)
     }
+
+    /// Every `primary_key` column that the relationships pair `table.column`
+    /// with by an *equality* conjunct, in declaration order. This is the one
+    /// resolution shared by S01 ("a `foreign_key` column with no targets is
+    /// unresolved") and D04 ("every target is checked for orphaned values"),
+    /// so the two checks cannot drift apart. A range conjunct (`>=`, `<`, …)
+    /// relates two columns without referencing one from the other, so it
+    /// never pairs. The fk column may sit on either side of the conjunct; a
+    /// self-join (both sides in `table`) pairs like any other.
+    pub fn foreign_key_targets(&self, table: &str, column: &str) -> Vec<FkTarget> {
+        let mut targets = Vec::new();
+        for rel in &self.relationships {
+            let Some(join) = &rel.join else { continue };
+            for conj in &join.conjuncts {
+                if conj.op != crate::join_expr::JoinOp::Eq {
+                    continue;
+                }
+                // the fk column may be written on either side of the `=`
+                let sides = [(&conj.lhs, &conj.rhs), (&conj.rhs, &conj.lhs)];
+                for (fk_side, pk_side) in sides {
+                    if fk_side.table != table || fk_side.column != column {
+                        continue;
+                    }
+                    let Some(pk_table) = self.table(&pk_side.table) else {
+                        continue; // an unknown table is S02's report
+                    };
+                    let Some(pk_column) = pk_table.column(&pk_side.column) else {
+                        continue; // an unknown column is S03's report
+                    };
+                    if pk_column.has(Constraint::PrimaryKey) {
+                        targets.push(FkTarget {
+                            table: pk_side.table.clone(),
+                            column: pk_side.column.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        targets
+    }
+}
+
+/// A `primary_key` column that a relationship pairs a `foreign_key` column
+/// with — one resolved fk→pk pairing (see [`DataDict::foreign_key_targets`]).
+/// Names are the dictionary's spellings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FkTarget {
+    pub table: String,
+    pub column: String,
 }
 
 #[derive(Debug, Clone)]

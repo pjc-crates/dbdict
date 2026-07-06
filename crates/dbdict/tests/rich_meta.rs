@@ -81,6 +81,17 @@ impl DuckdbBackend for FakeDuckdb {
     ) -> Result<usize, String> {
         unreachable!("validate_meta must not run data queries")
     }
+
+    fn count_orphaned_values(
+        &self,
+        _db_file: &Path,
+        _fk_table: &str,
+        _fk_column: &str,
+        _pk_table: &str,
+        _pk_column: &str,
+    ) -> Result<usize, String> {
+        unreachable!("validate_meta must not run data queries")
+    }
 }
 
 /// The standard one-table dictionary these tests validate: `trades` with a
@@ -657,6 +668,16 @@ fn database_path_resolves_relative_to_the_dictionary() {
         ) -> Result<usize, String> {
             unreachable!("validate_meta must not run data queries")
         }
+        fn count_orphaned_values(
+            &self,
+            _db: &Path,
+            _fk_table: &str,
+            _fk_col: &str,
+            _pk_table: &str,
+            _pk_col: &str,
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
     }
     let backend = PathCheckingFake {
         expect: dir.join("warehouse.duckdb"),
@@ -719,6 +740,16 @@ fn absolute_database_path_is_used_verbatim() {
             _db: &Path,
             _table: &str,
             _col: &str,
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
+        fn count_orphaned_values(
+            &self,
+            _db: &Path,
+            _fk_table: &str,
+            _fk_col: &str,
+            _pk_table: &str,
+            _pk_col: &str,
         ) -> Result<usize, String> {
             unreachable!("validate_meta must not run data queries")
         }

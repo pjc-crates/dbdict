@@ -36,12 +36,18 @@ struct FakeDuckdb {
     dup_key_count: usize,
     /// `"table.column"` → duplicate count returned by `count_duplicate_values`
     dup_value_counts: HashMap<String, usize>,
+    /// `"fk_table.fk_column->pk_table.pk_column"` → orphan count returned by
+    /// `count_orphaned_values`
+    orphan_counts: HashMap<String, usize>,
     /// every `count_duplicate_keys` call: `(table, key columns)`
     dup_calls: RefCell<Vec<(String, Vec<String>)>>,
     /// every `count_nulls` call: `"table.column"`
     null_calls: RefCell<Vec<String>>,
     /// every `count_duplicate_values` call: `"table.column"`
     value_calls: RefCell<Vec<String>>,
+    /// every `count_orphaned_values` call:
+    /// `"fk_table.fk_column->pk_table.pk_column"`
+    orphan_calls: RefCell<Vec<String>>,
 }
 
 impl FakeDuckdb {
@@ -53,9 +59,11 @@ impl FakeDuckdb {
             null_counts: HashMap::new(),
             dup_key_count: 0,
             dup_value_counts: HashMap::new(),
+            orphan_counts: HashMap::new(),
             dup_calls: RefCell::new(Vec::new()),
             null_calls: RefCell::new(Vec::new()),
             value_calls: RefCell::new(Vec::new()),
+            orphan_calls: RefCell::new(Vec::new()),
         }
     }
 }
@@ -100,6 +108,19 @@ impl DuckdbBackend for FakeDuckdb {
         let key = format!("{table}.{column}");
         self.value_calls.borrow_mut().push(key.clone());
         Ok(self.dup_value_counts.get(&key).copied().unwrap_or(0))
+    }
+
+    fn count_orphaned_values(
+        &self,
+        _db_file: &Path,
+        fk_table: &str,
+        fk_column: &str,
+        pk_table: &str,
+        pk_column: &str,
+    ) -> Result<usize, String> {
+        let key = format!("{fk_table}.{fk_column}->{pk_table}.{pk_column}");
+        self.orphan_calls.borrow_mut().push(key.clone());
+        Ok(self.orphan_counts.get(&key).copied().unwrap_or(0))
     }
 }
 
@@ -523,6 +544,17 @@ fn failing_duplicate_values_query_is_reported() {
         ) -> Result<usize, String> {
             Err("query interrupted".to_string())
         }
+        fn count_orphaned_values(
+            &self,
+            db: &Path,
+            fk_table: &str,
+            fk_col: &str,
+            pk_table: &str,
+            pk_col: &str,
+        ) -> Result<usize, String> {
+            self.inner
+                .count_orphaned_values(db, fk_table, fk_col, pk_table, pk_col)
+        }
     }
 
     let dir = temp_dir();
@@ -581,6 +613,17 @@ fn failing_data_query_is_reported() {
         ) -> Result<usize, String> {
             self.inner.count_duplicate_values(db, table, column)
         }
+        fn count_orphaned_values(
+            &self,
+            db: &Path,
+            fk_table: &str,
+            fk_col: &str,
+            pk_table: &str,
+            pk_col: &str,
+        ) -> Result<usize, String> {
+            self.inner
+                .count_orphaned_values(db, fk_table, fk_col, pk_table, pk_col)
+        }
     }
 
     let dir = temp_dir();
@@ -622,4 +665,426 @@ fn missing_table_is_not_queried() {
     );
     assert!(backend.null_calls.borrow().is_empty());
     assert!(backend.dup_calls.borrow().is_empty());
+}
+
+// --- D04 ---------------------------------------------------------------------
+
+/// The standard fk fixture: `trades.cat_id` is `foreign_key`, paired with the
+/// `primary_key` column `categories.id` by an equality join.
+fn write_fk_dict(dir: &Path) -> PathBuf {
+    write_yaml(
+        dir,
+        indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: trades
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: cat_id
+                    type: BIGINT
+                    constraints: [foreign_key]
+              - name: categories
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+            relationships:
+              - join: trades.cat_id = categories.id
+                cardinality: many-to-one
+        "#},
+    )
+}
+
+fn fk_trades_expected() -> Vec<(String, String)> {
+    vec![col("id", "BIGINT"), col("cat_id", "BIGINT")]
+}
+
+fn fk_categories_expected() -> Vec<(String, String)> {
+    vec![col("id", "BIGINT")]
+}
+
+fn fk_db() -> Result<Vec<TableSchema>, String> {
+    Ok(vec![
+        TableSchema {
+            name: "trades".to_string(),
+            columns: fk_trades_expected(),
+        },
+        TableSchema {
+            name: "categories".to_string(),
+            columns: fk_categories_expected(),
+        },
+    ])
+}
+
+fn fk_instantiated() -> Instantiated {
+    Instantiated {
+        tables: vec![fk_trades_expected(), fk_categories_expected()],
+        failures: Vec::new(),
+    }
+}
+
+#[test]
+fn orphaned_fk_value_is_d04() {
+    let dir = temp_dir();
+    let yaml = write_fk_dict(&dir);
+    let mut backend = FakeDuckdb::clean(fk_instantiated(), fk_db());
+    backend
+        .orphan_counts
+        .insert("trades.cat_id->categories.id".to_string(), 2);
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert!(
+        matches!(
+            problems.items.as_slice(),
+            [Problem { code: Some(code), kind: ProblemKind::OrphanedValues { count: 2 }, .. }]
+                if *code == "D04"
+        ),
+        "got {:?}",
+        problems.items
+    );
+    // the message names the pk target so a column with several declared
+    // targets carries tellable-apart problems
+    let message = &problems.items[0].message;
+    assert!(message.contains("2 orphaned values"), "got {message:?}");
+    assert!(message.contains("categories.id"), "got {message:?}");
+}
+
+/// clean fk data passes, exactly the declared pair is queried, and the fk
+/// column (constrained but not `required`) is never null-queried — D01's
+/// scope is unchanged by `foreign_key`
+#[test]
+fn clean_fk_column_queries_the_declared_pair() {
+    let dir = temp_dir();
+    let yaml = write_fk_dict(&dir);
+    let backend = FakeDuckdb::clean(fk_instantiated(), fk_db());
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Ok, "got {:?}", problems.items);
+    assert_eq!(
+        *backend.orphan_calls.borrow(),
+        vec!["trades.cat_id->categories.id".to_string()]
+    );
+    assert_eq!(
+        *backend.null_calls.borrow(),
+        vec!["trades.id".to_string(), "categories.id".to_string()]
+    );
+}
+
+/// a fk column paired with two primary keys is checked against each — every
+/// declared pairing stands alone (as in SQL), one problem per violating pair
+#[test]
+fn every_declared_fk_pk_pair_is_checked() {
+    let dir = temp_dir();
+    let yaml = write_yaml(
+        &dir,
+        indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: trades
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: cat_id
+                    type: BIGINT
+                    constraints: [foreign_key]
+              - name: categories
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+              - name: archive
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+            relationships:
+              - join: trades.cat_id = categories.id
+                cardinality: many-to-one
+              - join: trades.cat_id = archive.id
+                cardinality: many-to-one
+        "#},
+    );
+    let archive_expected = vec![col("id", "BIGINT")];
+    let mut backend = FakeDuckdb::clean(
+        Instantiated {
+            tables: vec![
+                fk_trades_expected(),
+                fk_categories_expected(),
+                archive_expected.clone(),
+            ],
+            failures: Vec::new(),
+        },
+        Ok(vec![
+            TableSchema {
+                name: "trades".to_string(),
+                columns: fk_trades_expected(),
+            },
+            TableSchema {
+                name: "categories".to_string(),
+                columns: fk_categories_expected(),
+            },
+            TableSchema {
+                name: "archive".to_string(),
+                columns: archive_expected,
+            },
+        ]),
+    );
+    backend
+        .orphan_counts
+        .insert("trades.cat_id->categories.id".to_string(), 1);
+    backend
+        .orphan_counts
+        .insert("trades.cat_id->archive.id".to_string(), 3);
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert_eq!(
+        *backend.orphan_calls.borrow(),
+        vec![
+            "trades.cat_id->categories.id".to_string(),
+            "trades.cat_id->archive.id".to_string(),
+        ]
+    );
+    let d04s: Vec<_> = problems
+        .items
+        .iter()
+        .filter(|p| matches!(p.kind, ProblemKind::OrphanedValues { .. }))
+        .collect();
+    assert_eq!(d04s.len(), 2, "got {:?}", problems.items);
+    assert!(
+        d04s.iter().any(
+            |p| matches!(p.kind, ProblemKind::OrphanedValues { count: 1 })
+                && p.message.contains("categories.id")
+        ),
+        "got {d04s:?}"
+    );
+    assert!(
+        d04s.iter().any(
+            |p| matches!(p.kind, ProblemKind::OrphanedValues { count: 3 })
+                && p.message.contains("archive.id")
+        ),
+        "got {d04s:?}"
+    );
+}
+
+/// a range conjunct relates the fk column to the pk without referencing it:
+/// no D04 query runs (and the spec level reports the fk as unresolved, S01)
+#[test]
+fn range_conjunct_does_not_pair_for_d04() {
+    let dir = temp_dir();
+    let yaml = write_yaml(
+        &dir,
+        indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: trades
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: cat_id
+                    type: BIGINT
+                    constraints: [foreign_key]
+              - name: categories
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+            relationships:
+              - join: trades.cat_id >= categories.id
+                cardinality: many-to-one
+        "#},
+    );
+    let backend = FakeDuckdb::clean(fk_instantiated(), fk_db());
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert!(backend.orphan_calls.borrow().is_empty());
+    assert!(
+        !problems
+            .items
+            .iter()
+            .any(|p| matches!(p.kind, ProblemKind::OrphanedValues { .. })),
+        "got {:?}",
+        problems.items
+    );
+}
+
+/// a self-join fk (a hierarchy) queries the same table on both sides
+#[test]
+fn self_join_fk_queries_the_same_table() {
+    let dir = temp_dir();
+    let yaml = write_yaml(
+        &dir,
+        indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: employees
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: manager_id
+                    type: BIGINT
+                    constraints: [foreign_key]
+            relationships:
+              - join: employees.manager_id = employees.id
+                cardinality: many-to-one
+        "#},
+    );
+    let expected = vec![col("id", "BIGINT"), col("manager_id", "BIGINT")];
+    let backend = FakeDuckdb::clean(
+        Instantiated {
+            tables: vec![expected.clone()],
+            failures: Vec::new(),
+        },
+        Ok(vec![TableSchema {
+            name: "employees".to_string(),
+            columns: expected,
+        }]),
+    );
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Ok, "got {:?}", problems.items);
+    assert_eq!(
+        *backend.orphan_calls.borrow(),
+        vec!["employees.manager_id->employees.id".to_string()]
+    );
+}
+
+/// the pk-side table absent from the database already has its M06: the pair
+/// can't be queried, so D04 is skipped rather than double-reported
+#[test]
+fn missing_pk_table_is_not_queried_for_d04() {
+    let dir = temp_dir();
+    let yaml = write_fk_dict(&dir);
+    let backend = FakeDuckdb::clean(
+        fk_instantiated(),
+        Ok(vec![TableSchema {
+            name: "trades".to_string(),
+            columns: fk_trades_expected(),
+        }]),
+    );
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert!(
+        problems
+            .items
+            .iter()
+            .any(|p| matches!(p.kind, ProblemKind::MissingTable)),
+        "got {:?}",
+        problems.items
+    );
+    assert!(backend.orphan_calls.borrow().is_empty());
+}
+
+/// the pk-side *column* absent from the database already has its M02: the
+/// pair can't be queried, so D04 is skipped
+#[test]
+fn missing_pk_column_is_not_queried_for_d04() {
+    let dir = temp_dir();
+    let yaml = write_fk_dict(&dir);
+    let backend = FakeDuckdb::clean(
+        fk_instantiated(),
+        Ok(vec![
+            TableSchema {
+                name: "trades".to_string(),
+                columns: fk_trades_expected(),
+            },
+            TableSchema {
+                name: "categories".to_string(),
+                columns: vec![col("name", "VARCHAR")], // no `id`
+            },
+        ]),
+    );
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert!(backend.orphan_calls.borrow().is_empty());
+}
+
+/// a failing D04 query is reported like any other lost check, not swallowed
+#[test]
+fn failing_orphan_query_is_reported() {
+    struct FailingOrphans {
+        inner: FakeDuckdb,
+    }
+    impl DuckdbBackend for FailingOrphans {
+        fn instantiate(&self, dict: &DataDict) -> Instantiated {
+            self.inner.instantiate(dict)
+        }
+        fn read_schema(&self, db_file: &Path) -> Result<Vec<TableSchema>, String> {
+            self.inner.read_schema(db_file)
+        }
+        fn classify(&self, canonical_type: &str) -> TypeCategory {
+            self.inner.classify(canonical_type)
+        }
+        fn count_nulls(&self, db: &Path, table: &str, col: &str) -> Result<usize, String> {
+            self.inner.count_nulls(db, table, col)
+        }
+        fn count_duplicate_keys(
+            &self,
+            db: &Path,
+            table: &str,
+            key_columns: &[String],
+        ) -> Result<usize, String> {
+            self.inner.count_duplicate_keys(db, table, key_columns)
+        }
+        fn count_duplicate_values(
+            &self,
+            db: &Path,
+            table: &str,
+            column: &str,
+        ) -> Result<usize, String> {
+            self.inner.count_duplicate_values(db, table, column)
+        }
+        fn count_orphaned_values(
+            &self,
+            _db: &Path,
+            _fk_table: &str,
+            _fk_col: &str,
+            _pk_table: &str,
+            _pk_col: &str,
+        ) -> Result<usize, String> {
+            Err("query interrupted".to_string())
+        }
+    }
+
+    let dir = temp_dir();
+    let yaml = write_fk_dict(&dir);
+    let backend = FailingOrphans {
+        inner: FakeDuckdb::clean(fk_instantiated(), fk_db()),
+    };
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert!(
+        problems
+            .items
+            .iter()
+            .any(|p| matches!(p.kind, ProblemKind::UnreadableSource)
+                && p.message.contains("query interrupted")),
+        "got {:?}",
+        problems.items
+    );
 }

@@ -103,6 +103,17 @@ impl dbdict::rich::DuckdbBackend for NoDuckdb {
     ) -> Result<usize, String> {
         unreachable!("legacy validation must not query a duckdb database")
     }
+
+    fn count_orphaned_values(
+        &self,
+        _db_file: &Path,
+        _fk_table: &str,
+        _fk_column: &str,
+        _pk_table: &str,
+        _pk_column: &str,
+    ) -> Result<usize, String> {
+        unreachable!("legacy validation must not query a duckdb database")
+    }
 }
 
 /// Write `yaml` to `<dir>/dict.yaml` and return the path.

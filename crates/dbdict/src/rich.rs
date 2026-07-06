@@ -90,10 +90,11 @@ pub enum TypeCategory {
 /// The data-level methods are deliberately narrow, named queries rather
 /// than a generic "run this SQL" seam: identifier quoting and SQL building
 /// are backend knowledge the core must not own, and narrow methods are easy
-/// to fake. Revisited when the third check (D03) landed: three methods each
-/// mapping 1:1 to a documented check is a cohesive seam, not a query
-/// catalogue — reconsider only if checks stop mapping cleanly to one query
-/// shape each.
+/// to fake. Revisited when the third check (D03) landed, and again at the
+/// fourth (D04, the first *cross-table* query): methods each mapping 1:1 to
+/// a documented check is a cohesive seam, not a query catalogue — D04
+/// changes the SQL inside its method (an anti-join), not the seam's shape.
+/// Reconsider only if checks stop mapping cleanly to one query shape each.
 pub trait DuckdbBackend {
     /// Build the scratch database from the dictionary's typedefs and tables,
     /// and DESCRIBE what was created.
@@ -131,6 +132,20 @@ pub trait DuckdbBackend {
         db_file: &Path,
         table: &str,
         column: &str,
+    ) -> Result<usize, String>;
+
+    /// D04 — how many distinct *non-NULL* values of `fk_table.fk_column` do
+    /// not exist in `pk_table.pk_column`. NULLs are excluded, per SQL
+    /// `MATCH SIMPLE` semantics (a NULL foreign key means "no reference").
+    /// A self-join passes the same table for both sides. `Err` is the
+    /// human-readable reason the query failed.
+    fn count_orphaned_values(
+        &self,
+        db_file: &Path,
+        fk_table: &str,
+        fk_column: &str,
+        pk_table: &str,
+        pk_column: &str,
     ) -> Result<usize, String>;
 }
 
@@ -285,16 +300,29 @@ pub(crate) fn check_data(
         else {
             continue;
         };
-        check_table_data(dict_table, actual_table, &db_file, duckdb, out);
+        check_table_data(
+            dict,
+            dict_table,
+            actual_table,
+            &actual,
+            &db_file,
+            duckdb,
+            out,
+        );
     }
 }
 
 /// The `D##` checks for one table: D01 (nulls in required columns), D02
-/// (duplicate primary-key values), and D03 (duplicate values in `unique`
-/// columns).
+/// (duplicate primary-key values), D03 (duplicate values in `unique`
+/// columns), and D04 (orphaned values in `foreign_key` columns). D04 is the
+/// reason for the extra context: resolving a foreign key's targets needs the
+/// whole dictionary (`dict`), and querying them needs the pk-side tables'
+/// database spellings (`actual`).
 fn check_table_data(
+    dict: &crate::model::DataDict,
     dict_table: &Table,
     actual_table: &TableSchema,
+    actual: &[TableSchema],
     db_file: &Path,
     duckdb: &dyn DuckdbBackend,
     out: &mut ProblemSet,
@@ -414,6 +442,67 @@ fn check_table_data(
             Err(reason) => push_query_failure(dict_table, reason, out),
         }
     }
+
+    // D04 — each `foreign_key` column's non-NULL values must exist in every
+    // `primary_key` column the relationships pair it with. The pairing is
+    // the same equality-only resolution S01 uses (one shared helper, so the
+    // two checks cannot drift — see DataDict::foreign_key_targets); NULLs
+    // are excluded by the query, per SQL MATCH SIMPLE semantics (see
+    // site/validation.md)
+    for col in &dict_table.columns {
+        if !col.has(crate::model::Constraint::ForeignKey) {
+            continue;
+        }
+        let Some(fk_db_name) = db_column(&col.name.value) else {
+            continue;
+        };
+        for target in dict.foreign_key_targets(&dict_table.name.value, &col.name.value) {
+            // the pk side must be reachable in the database too: an absent
+            // table already has its M06, an absent column its M02 — skip
+            // rather than pile a query failure on top
+            let Some(pk_table) = actual.iter().find(|a| names_eq(&a.name, &target.table)) else {
+                continue;
+            };
+            let Some(pk_db_name) = pk_table
+                .columns
+                .iter()
+                .map(|(db_name, _)| db_name.as_str())
+                .find(|db_name| names_eq(&target.column, db_name))
+            else {
+                continue;
+            };
+            match duckdb.count_orphaned_values(
+                db_file,
+                &actual_table.name,
+                fk_db_name,
+                &pk_table.name,
+                pk_db_name,
+            ) {
+                Ok(0) => {}
+                Ok(count) => {
+                    let plural = if count == 1 { "" } else { "s" };
+                    out.push_located(
+                        ProblemKind::OrphanedValues { count },
+                        Severity::Error,
+                        "A foreign key value must exist in the primary key it references.",
+                        // name the pk target (dictionary spellings): a column
+                        // paired with several primary keys carries one problem
+                        // per violating pair, and they must be tellable apart
+                        format!(
+                            "has {count} orphaned value{plural} (no match in {}.{})",
+                            target.table, target.column
+                        ),
+                        [
+                            dict_table.name.span.clone(),
+                            col.name.span.clone(),
+                            foreign_key_span(col),
+                        ],
+                    );
+                }
+                Err(reason) => push_query_failure(dict_table, reason, out),
+            }
+        }
+    }
 }
 
 /// A data query the backend could not answer. Reported like M05 (the source
@@ -449,6 +538,15 @@ fn uniqueness_span(col: &crate::model::Column) -> SourceInfo {
     col.constraints
         .iter()
         .find(|c| matches!(c.value, crate::model::Constraint::Unique))
+        .map_or_else(|| col.name.span.clone(), |c| c.span.clone())
+}
+
+/// The span of `col`'s `foreign_key` constraint, falling back to the column
+/// name. The D04 twin of [`uniqueness_span`].
+fn foreign_key_span(col: &crate::model::Column) -> SourceInfo {
+    col.constraints
+        .iter()
+        .find(|c| matches!(c.value, crate::model::Constraint::ForeignKey))
         .map_or_else(|| col.name.span.clone(), |c| c.span.clone())
 }
 

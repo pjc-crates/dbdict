@@ -347,6 +347,13 @@ fn s01_fk_no_relationship() {
     assert_snapshot!(failing_diagnostic("spec/s01-fk-no-relationship.yaml"));
 }
 
+// a range conjunct relates the fk column to the pk without *referencing* it,
+// so it must not satisfy S01 — only equality pairings resolve a foreign key
+#[test]
+fn s01_fk_range_conjunct_only() {
+    assert_snapshot!(failing_diagnostic("spec/s01-fk-range-conjunct-only.yaml"));
+}
+
 #[test]
 fn s02_missing_table() {
     assert_snapshot!(failing_diagnostic("spec/s02-missing-table.yaml"));
