@@ -34,10 +34,14 @@ struct FakeDuckdb {
     null_counts: HashMap<String, usize>,
     /// duplicate-key count returned by `count_duplicate_keys` for any table
     dup_key_count: usize,
+    /// `"table.column"` → duplicate count returned by `count_duplicate_values`
+    dup_value_counts: HashMap<String, usize>,
     /// every `count_duplicate_keys` call: `(table, key columns)`
     dup_calls: RefCell<Vec<(String, Vec<String>)>>,
     /// every `count_nulls` call: `"table.column"`
     null_calls: RefCell<Vec<String>>,
+    /// every `count_duplicate_values` call: `"table.column"`
+    value_calls: RefCell<Vec<String>>,
 }
 
 impl FakeDuckdb {
@@ -48,8 +52,10 @@ impl FakeDuckdb {
             db,
             null_counts: HashMap::new(),
             dup_key_count: 0,
+            dup_value_counts: HashMap::new(),
             dup_calls: RefCell::new(Vec::new()),
             null_calls: RefCell::new(Vec::new()),
+            value_calls: RefCell::new(Vec::new()),
         }
     }
 }
@@ -83,6 +89,17 @@ impl DuckdbBackend for FakeDuckdb {
             .borrow_mut()
             .push((table.to_string(), key_columns.to_vec()));
         Ok(self.dup_key_count)
+    }
+
+    fn count_duplicate_values(
+        &self,
+        _db_file: &Path,
+        table: &str,
+        column: &str,
+    ) -> Result<usize, String> {
+        let key = format!("{table}.{column}");
+        self.value_calls.borrow_mut().push(key.clone());
+        Ok(self.dup_value_counts.get(&key).copied().unwrap_or(0))
     }
 }
 
@@ -300,6 +317,233 @@ fn no_primary_key_no_duplicate_query() {
     assert!(backend.dup_calls.borrow().is_empty());
 }
 
+// --- D03 ---------------------------------------------------------------------
+
+/// A fixture with an explicitly-`unique` column that is not the primary key:
+/// `accounts` with pk `id` and unique `email`.
+fn write_accounts_dict(dir: &Path) -> PathBuf {
+    write_yaml(
+        dir,
+        indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: accounts
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: email
+                    type: VARCHAR
+                    constraints: [unique]
+        "#},
+    )
+}
+
+fn accounts_expected() -> Vec<(String, String)> {
+    vec![col("id", "BIGINT"), col("email", "VARCHAR")]
+}
+
+fn accounts_backend() -> FakeDuckdb {
+    FakeDuckdb::clean(
+        Instantiated {
+            tables: vec![accounts_expected()],
+            failures: Vec::new(),
+        },
+        Ok(vec![TableSchema {
+            name: "accounts".to_string(),
+            columns: accounts_expected(),
+        }]),
+    )
+}
+
+#[test]
+fn duplicate_values_in_unique_column_is_d03() {
+    let dir = temp_dir();
+    let yaml = write_accounts_dict(&dir);
+    let mut backend = accounts_backend();
+    backend
+        .dup_value_counts
+        .insert("accounts.email".to_string(), 2);
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert!(
+        matches!(
+            problems.items.as_slice(),
+            [Problem { code: Some(code), kind: ProblemKind::DuplicateValues { count: 2 }, .. }]
+                if *code == "D03"
+        ),
+        "got {:?}",
+        problems.items
+    );
+    let message = &problems.items[0].message;
+    assert!(message.contains("2 duplicated value"), "got {message:?}");
+}
+
+#[test]
+fn clean_unique_column_is_queried_and_passes() {
+    let dir = temp_dir();
+    let yaml = write_accounts_dict(&dir);
+    let backend = accounts_backend();
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Ok, "got {:?}", problems.items);
+    // the unique column WAS checked — passing is a query result, not a skip
+    assert_eq!(*backend.value_calls.borrow(), vec!["accounts.email"]);
+}
+
+/// a column that is by itself the whole primary key is D02's job: an explicit
+/// `unique` on it must not trigger a second, identical D03 query
+#[test]
+fn sole_primary_key_column_is_not_double_checked() {
+    let dir = temp_dir();
+    let yaml = write_yaml(
+        &dir,
+        indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: accounts
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key, unique]
+        "#},
+    );
+    let expected = vec![col("id", "BIGINT")];
+    let backend = FakeDuckdb::clean(
+        Instantiated {
+            tables: vec![expected.clone()],
+            failures: Vec::new(),
+        },
+        Ok(vec![TableSchema {
+            name: "accounts".to_string(),
+            columns: expected,
+        }]),
+    );
+
+    validate_data(&yaml, None, &backend);
+    // D02 queried the key; D03 stayed out of it
+    assert_eq!(backend.dup_calls.borrow().len(), 1);
+    assert!(backend.value_calls.borrow().is_empty());
+}
+
+/// an explicit `unique` on a member of a *composite* key IS checked: D02's
+/// tuple check deliberately does not imply per-column uniqueness
+#[test]
+fn composite_key_member_with_unique_is_checked() {
+    let dir = temp_dir();
+    let yaml = write_yaml(
+        &dir,
+        indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: prices
+                columns:
+                  - name: sym
+                    type: VARCHAR
+                    constraints: [primary_key, unique]
+                  - name: day
+                    type: DATE
+                    constraints: [primary_key]
+        "#},
+    );
+    let expected = vec![col("sym", "VARCHAR"), col("day", "DATE")];
+    let backend = FakeDuckdb::clean(
+        Instantiated {
+            tables: vec![expected.clone()],
+            failures: Vec::new(),
+        },
+        Ok(vec![TableSchema {
+            name: "prices".to_string(),
+            columns: expected,
+        }]),
+    );
+
+    validate_data(&yaml, None, &backend);
+    assert_eq!(*backend.value_calls.borrow(), vec!["prices.sym"]);
+}
+
+/// `unique` alone does not imply `required`: the column is checked for
+/// duplicates but never queried for nulls (D01's scope is unchanged)
+#[test]
+fn unique_without_required_is_not_null_queried() {
+    let dir = temp_dir();
+    let yaml = write_accounts_dict(&dir);
+    let backend = accounts_backend();
+
+    validate_data(&yaml, None, &backend);
+    // only the pk `id` is null-queried; `email` (unique, optional) is not
+    assert_eq!(*backend.null_calls.borrow(), vec!["accounts.id"]);
+}
+
+/// a failing D03 query is reported like any other lost check, not swallowed
+#[test]
+fn failing_duplicate_values_query_is_reported() {
+    struct FailingValues {
+        inner: FakeDuckdb,
+    }
+    impl DuckdbBackend for FailingValues {
+        fn instantiate(&self, dict: &DataDict) -> Instantiated {
+            self.inner.instantiate(dict)
+        }
+        fn read_schema(&self, db_file: &Path) -> Result<Vec<TableSchema>, String> {
+            self.inner.read_schema(db_file)
+        }
+        fn classify(&self, canonical_type: &str) -> TypeCategory {
+            self.inner.classify(canonical_type)
+        }
+        fn count_nulls(&self, db: &Path, table: &str, col: &str) -> Result<usize, String> {
+            self.inner.count_nulls(db, table, col)
+        }
+        fn count_duplicate_keys(
+            &self,
+            db: &Path,
+            table: &str,
+            key_columns: &[String],
+        ) -> Result<usize, String> {
+            self.inner.count_duplicate_keys(db, table, key_columns)
+        }
+        fn count_duplicate_values(
+            &self,
+            _db: &Path,
+            _table: &str,
+            _column: &str,
+        ) -> Result<usize, String> {
+            Err("query interrupted".to_string())
+        }
+    }
+
+    let dir = temp_dir();
+    let yaml = write_accounts_dict(&dir);
+    let backend = FailingValues {
+        inner: accounts_backend(),
+    };
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert!(
+        problems
+            .items
+            .iter()
+            .any(|p| matches!(p.kind, ProblemKind::UnreadableSource)
+                && p.message.contains("query interrupted")),
+        "got {:?}",
+        problems.items
+    );
+}
+
 // --- failure modes ------------------------------------------------------------
 
 /// a data query the backend cannot answer is reported, not swallowed
@@ -328,6 +572,14 @@ fn failing_data_query_is_reported() {
             key_columns: &[String],
         ) -> Result<usize, String> {
             self.inner.count_duplicate_keys(db, table, key_columns)
+        }
+        fn count_duplicate_values(
+            &self,
+            db: &Path,
+            table: &str,
+            column: &str,
+        ) -> Result<usize, String> {
+            self.inner.count_duplicate_values(db, table, column)
         }
     }
 

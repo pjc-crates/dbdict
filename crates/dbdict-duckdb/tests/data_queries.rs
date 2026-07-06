@@ -1,5 +1,6 @@
-//! Tests for the native data-level queries: `count_nulls` (D01) and
-//! `count_duplicate_keys` (D02) against a real duckdb database file.
+//! Tests for the native data-level queries: `count_nulls` (D01),
+//! `count_duplicate_keys` (D02), and `count_duplicate_values` (D03) against
+//! a real duckdb database file.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -101,6 +102,53 @@ fn unique_keys_count_zero() {
         dbdict_duckdb::count_duplicate_keys(&file, "t", &["id".to_string()]),
         Ok(0)
     );
+}
+
+#[test]
+fn counts_duplicated_values_in_a_unique_column() {
+    // 'a' appears twice and 'b' three times: two distinct duplicated values
+    let file = build_db(
+        "CREATE TABLE t (email VARCHAR);
+         INSERT INTO t VALUES ('a'), ('a'), ('b'), ('b'), ('b'), ('c');",
+    );
+    assert_eq!(
+        dbdict_duckdb::count_duplicate_values(&file, "t", "email"),
+        Ok(2)
+    );
+}
+
+/// the semantics lock for D03: repeated NULLs are NOT duplicates — SQL
+/// UNIQUE treats NULLs as distinct, and an optional-but-unique column may
+/// legitimately hold many of them (unlike D02, which counts NULL keys)
+#[test]
+fn repeated_nulls_are_not_duplicate_values() {
+    let file = build_db(
+        "CREATE TABLE t (email VARCHAR);
+         INSERT INTO t VALUES (NULL), (NULL), (NULL), ('a');",
+    );
+    assert_eq!(
+        dbdict_duckdb::count_duplicate_values(&file, "t", "email"),
+        Ok(0)
+    );
+}
+
+#[test]
+fn duplicate_values_match_identifiers_case_insensitively() {
+    let file = build_db(
+        "CREATE TABLE Trades (Email VARCHAR);
+         INSERT INTO Trades VALUES ('a'), ('a');",
+    );
+    assert_eq!(
+        dbdict_duckdb::count_duplicate_values(&file, "trades", "email"),
+        Ok(1)
+    );
+}
+
+#[test]
+fn duplicate_values_on_a_missing_column_is_an_error() {
+    let file = build_db("CREATE TABLE t (email VARCHAR);");
+    let result = dbdict_duckdb::count_duplicate_values(&file, "t", "no_such");
+    assert!(result.is_err(), "got {result:?}");
 }
 
 /// quoting keeps a hostile name inert: an identifier with quotes and SQL in

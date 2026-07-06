@@ -178,6 +178,11 @@ pub enum ProblemKind {
     /// occurring in more than one row; `count` is how many distinct key
     /// values are duplicated.
     DuplicateKey { count: usize },
+    /// `D03` (rich format) — an explicitly-`unique` column has non-NULL
+    /// values occurring in more than one row; `count` is how many distinct
+    /// values are duplicated. NULLs are excluded, per SQL `UNIQUE`
+    /// semantics (see `site/validation.md`).
+    DuplicateValues { count: usize },
 }
 
 impl ProblemKind {
@@ -197,6 +202,7 @@ impl ProblemKind {
             ProblemKind::InvalidColumnType => "M09",
             ProblemKind::NullsInRequired { .. } => "D01",
             ProblemKind::DuplicateKey { .. } => "D02",
+            ProblemKind::DuplicateValues { .. } => "D03",
             _ => return None,
         })
     }
@@ -215,7 +221,9 @@ impl ProblemKind {
             | ProblemKind::ExtraTable
             | ProblemKind::InvalidTypedef
             | ProblemKind::InvalidColumnType => Level::Meta,
-            ProblemKind::NullsInRequired { .. } | ProblemKind::DuplicateKey { .. } => Level::Data,
+            ProblemKind::NullsInRequired { .. }
+            | ProblemKind::DuplicateKey { .. }
+            | ProblemKind::DuplicateValues { .. } => Level::Data,
             _ => return None,
         })
     }

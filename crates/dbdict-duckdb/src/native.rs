@@ -265,6 +265,15 @@ impl dbdict::rich::DuckdbBackend for NativeDuckdb {
     ) -> Result<usize, String> {
         count_duplicate_keys(db_file, table, key_columns)
     }
+
+    fn count_duplicate_values(
+        &self,
+        db_file: &Path,
+        table: &str,
+        column: &str,
+    ) -> Result<usize, String> {
+        count_duplicate_values(db_file, table, column)
+    }
 }
 
 /// Classify a canonical type spelling (as `DESCRIBE` returns it) for the
@@ -445,6 +454,21 @@ pub fn count_duplicate_keys(
         "SELECT count(*) FROM (SELECT 1 FROM {} GROUP BY {} HAVING count(*) > 1)",
         quote_ident(table),
         keys
+    );
+    query_count(&conn, &sql)
+}
+
+/// D03 — how many distinct non-NULL values of `column` occur in more than
+/// one row of `table`. NULLs are excluded before grouping: SQL `UNIQUE`
+/// semantics treat NULLs as distinct, so an optional-but-unique column may
+/// legitimately repeat them (contrast [`count_duplicate_keys`], where a
+/// primary key implies `required` and NULL keys are still counted).
+pub fn count_duplicate_values(db_file: &Path, table: &str, column: &str) -> Result<usize, String> {
+    let conn = open_read_only(db_file)?;
+    let col = quote_ident(column);
+    let sql = format!(
+        "SELECT count(*) FROM (SELECT 1 FROM {} WHERE {col} IS NOT NULL GROUP BY {col} HAVING count(*) > 1)",
+        quote_ident(table)
     );
     query_count(&conn, &sql)
 }

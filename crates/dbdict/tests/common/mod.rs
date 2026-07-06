@@ -94,6 +94,15 @@ impl dbdict::rich::DuckdbBackend for NoDuckdb {
     ) -> Result<usize, String> {
         unreachable!("legacy validation must not query a duckdb database")
     }
+
+    fn count_duplicate_values(
+        &self,
+        _db_file: &Path,
+        _table: &str,
+        _column: &str,
+    ) -> Result<usize, String> {
+        unreachable!("legacy validation must not query a duckdb database")
+    }
 }
 
 /// Write `yaml` to `<dir>/dict.yaml` and return the path.

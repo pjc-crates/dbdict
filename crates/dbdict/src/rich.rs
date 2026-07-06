@@ -87,11 +87,13 @@ pub enum TypeCategory {
 /// What the rich metadata and data levels ask of duckdb. Implemented by
 /// `dbdict-duckdb`; faked in core tests.
 ///
-/// The two data-level methods are deliberately narrow, named queries rather
+/// The data-level methods are deliberately narrow, named queries rather
 /// than a generic "run this SQL" seam: identifier quoting and SQL building
 /// are backend knowledge the core must not own, and narrow methods are easy
-/// to fake. Revisit if a third data check makes this read like a query
-/// catalogue.
+/// to fake. Revisited when the third check (D03) landed: three methods each
+/// mapping 1:1 to a documented check is a cohesive seam, not a query
+/// catalogue — reconsider only if checks stop mapping cleanly to one query
+/// shape each.
 pub trait DuckdbBackend {
     /// Build the scratch database from the dictionary's typedefs and tables,
     /// and DESCRIBE what was created.
@@ -118,6 +120,17 @@ pub trait DuckdbBackend {
         db_file: &Path,
         table: &str,
         key_columns: &[String],
+    ) -> Result<usize, String>;
+
+    /// D03 — how many distinct *non-NULL* values of `column` occur in more
+    /// than one row of `table`. NULLs are excluded, per SQL `UNIQUE`
+    /// semantics (contrast [`Self::count_duplicate_keys`], which counts NULL
+    /// keys). `Err` is the human-readable reason the query failed.
+    fn count_duplicate_values(
+        &self,
+        db_file: &Path,
+        table: &str,
+        column: &str,
     ) -> Result<usize, String>;
 }
 
@@ -276,8 +289,9 @@ pub(crate) fn check_data(
     }
 }
 
-/// The `D##` checks for one table: D01 (nulls in required columns) and D02
-/// (duplicate primary-key values).
+/// The `D##` checks for one table: D01 (nulls in required columns), D02
+/// (duplicate primary-key values), and D03 (duplicate values in `unique`
+/// columns).
 fn check_table_data(
     dict_table: &Table,
     actual_table: &TableSchema,
@@ -335,33 +349,70 @@ fn check_table_data(
         .iter()
         .filter(|c| c.has(crate::model::Constraint::PrimaryKey))
         .collect();
-    if key_columns.is_empty() {
-        return;
-    }
-    let db_names: Option<Vec<String>> = key_columns
-        .iter()
-        .map(|c| db_column(&c.name.value).map(str::to_string))
-        .collect();
-    let Some(db_names) = db_names else {
-        return;
-    };
-    match duckdb.count_duplicate_keys(db_file, &actual_table.name, &db_names) {
-        Ok(0) => {}
-        Ok(count) => {
-            let plural = if count == 1 { "" } else { "s" };
-            let mut spans = vec![dict_table.name.span.clone()];
-            for col in &key_columns {
-                spans.push(col.name.span.clone());
+    // scoped ifs rather than early returns: D03 below must still run when
+    // the table has no primary key (or one of its key columns is missing)
+    if !key_columns.is_empty() {
+        let db_names: Option<Vec<String>> = key_columns
+            .iter()
+            .map(|c| db_column(&c.name.value).map(str::to_string))
+            .collect();
+        if let Some(db_names) = db_names {
+            match duckdb.count_duplicate_keys(db_file, &actual_table.name, &db_names) {
+                Ok(0) => {}
+                Ok(count) => {
+                    let plural = if count == 1 { "" } else { "s" };
+                    let mut spans = vec![dict_table.name.span.clone()];
+                    for col in &key_columns {
+                        spans.push(col.name.span.clone());
+                    }
+                    out.push_located(
+                        ProblemKind::DuplicateKey { count },
+                        Severity::Error,
+                        "A primary key must be unique across rows.",
+                        format!("has {count} duplicated key value{plural}"),
+                        spans,
+                    );
+                }
+                Err(reason) => push_query_failure(dict_table, reason, out),
             }
-            out.push_located(
-                ProblemKind::DuplicateKey { count },
-                Severity::Error,
-                "A primary key must be unique across rows.",
-                format!("has {count} duplicated key value{plural}"),
-                spans,
-            );
         }
-        Err(reason) => push_query_failure(dict_table, reason, out),
+    }
+
+    // D03 — each explicitly-`unique` column must hold distinct non-NULL
+    // values (NULLs are excluded by the query, per SQL UNIQUE semantics —
+    // see site/validation.md)
+    for col in &dict_table.columns {
+        if !col.has(crate::model::Constraint::Unique) {
+            continue;
+        }
+        // a column that is by itself the whole primary key is D02's job —
+        // the same query would just report the same duplicates twice. a
+        // member of a *composite* key is still checked: D02's tuple check
+        // deliberately does not imply per-column uniqueness
+        if key_columns.len() == 1 && key_columns[0].name.value == col.name.value {
+            continue;
+        }
+        let Some(db_name) = db_column(&col.name.value) else {
+            continue;
+        };
+        match duckdb.count_duplicate_values(db_file, &actual_table.name, db_name) {
+            Ok(0) => {}
+            Ok(count) => {
+                let plural = if count == 1 { "" } else { "s" };
+                out.push_located(
+                    ProblemKind::DuplicateValues { count },
+                    Severity::Error,
+                    "A unique column must not contain duplicate values.",
+                    format!("has {count} duplicated value{plural}"),
+                    [
+                        dict_table.name.span.clone(),
+                        col.name.span.clone(),
+                        uniqueness_span(col),
+                    ],
+                );
+            }
+            Err(reason) => push_query_failure(dict_table, reason, out),
+        }
     }
 }
 
@@ -389,6 +440,15 @@ fn requiredness_span(col: &crate::model::Column) -> SourceInfo {
                 crate::model::Constraint::Required | crate::model::Constraint::PrimaryKey
             )
         })
+        .map_or_else(|| col.name.span.clone(), |c| c.span.clone())
+}
+
+/// The span of `col`'s `unique` constraint, falling back to the column name.
+/// The D03 twin of [`requiredness_span`].
+fn uniqueness_span(col: &crate::model::Column) -> SourceInfo {
+    col.constraints
+        .iter()
+        .find(|c| matches!(c.value, crate::model::Constraint::Unique))
         .map_or_else(|| col.name.span.clone(), |c| c.span.clone())
 }
 
