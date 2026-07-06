@@ -252,6 +252,19 @@ impl dbdict::rich::DuckdbBackend for NativeDuckdb {
     fn classify(&self, canonical_type: &str) -> TypeCategory {
         classify(canonical_type)
     }
+
+    fn count_nulls(&self, db_file: &Path, table: &str, column: &str) -> Result<usize, String> {
+        count_nulls(db_file, table, column)
+    }
+
+    fn count_duplicate_keys(
+        &self,
+        db_file: &Path,
+        table: &str,
+        key_columns: &[String],
+    ) -> Result<usize, String> {
+        count_duplicate_keys(db_file, table, key_columns)
+    }
 }
 
 /// Classify a canonical type spelling (as `DESCRIBE` returns it) for the
@@ -331,10 +344,7 @@ fn create_types_fixpoint(conn: &Connection, typedefs: &[&Typedef]) -> Vec<(usize
 /// The database is opened read-only, so it is never created, mutated, or
 /// locked for writing.
 pub fn read_schema(db_file: &Path) -> Result<Vec<TableSchema>, String> {
-    let config = Config::default()
-        .access_mode(AccessMode::ReadOnly)
-        .map_err(|e| e.to_string())?;
-    let conn = Connection::open_with_flags(db_file, config).map_err(|e| e.to_string())?;
+    let conn = open_read_only(db_file)?;
     let mut schema = Vec::new();
     for name in relation_names(&conn)? {
         schema.push(TableSchema {
@@ -343,6 +353,61 @@ pub fn read_schema(db_file: &Path) -> Result<Vec<TableSchema>, String> {
         });
     }
     Ok(schema)
+}
+
+/// Open the database at `db_file` read-only, so it is never created, mutated,
+/// or locked for writing.
+fn open_read_only(db_file: &Path) -> Result<Connection, String> {
+    let config = Config::default()
+        .access_mode(AccessMode::ReadOnly)
+        .map_err(|e| e.to_string())?;
+    Connection::open_with_flags(db_file, config).map_err(|e| e.to_string())
+}
+
+/// D01 — how many rows of `table` are null in `column`. Opens its own
+/// read-only connection per call, like everything else here (the backend is
+/// a unit struct; all state is per-call).
+pub fn count_nulls(db_file: &Path, table: &str, column: &str) -> Result<usize, String> {
+    let conn = open_read_only(db_file)?;
+    let sql = format!(
+        "SELECT count(*) FROM {} WHERE {} IS NULL",
+        quote_ident(table),
+        quote_ident(column)
+    );
+    query_count(&conn, &sql)
+}
+
+/// D02 — how many distinct values of `key_columns` (one composite key) occur
+/// in more than one row of `table`. `GROUP BY` treats NULL keys as equal, so
+/// repeated all-NULL keys count as duplicates too — D01 flags the nulls
+/// themselves separately.
+pub fn count_duplicate_keys(
+    db_file: &Path,
+    table: &str,
+    key_columns: &[String],
+) -> Result<usize, String> {
+    let conn = open_read_only(db_file)?;
+    let keys = key_columns
+        .iter()
+        .map(|c| quote_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT count(*) FROM (SELECT 1 FROM {} GROUP BY {} HAVING count(*) > 1)",
+        quote_ident(table),
+        keys
+    );
+    query_count(&conn, &sql)
+}
+
+/// Run a `SELECT count(*)`-shaped query and return its single value.
+fn query_count(conn: &Connection, sql: &str) -> Result<usize, String> {
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let count = stmt
+        .query_row([], |row| row.get::<_, i64>(0))
+        .map_err(|e| e.to_string())?;
+    // count(*) is never negative; the cast is safe
+    Ok(count as usize)
 }
 
 /// Double-quote a DuckDB identifier, escaping embedded quotes, so a name (or

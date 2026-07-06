@@ -58,6 +58,20 @@ impl DuckdbBackend for FakeDuckdb {
     fn classify(&self, canonical_type: &str) -> TypeCategory {
         fixture_classify(canonical_type)
     }
+
+    // the metadata level never queries values — reaching either is a bug
+    fn count_nulls(&self, _db_file: &Path, _table: &str, _column: &str) -> Result<usize, String> {
+        unreachable!("validate_meta must not run data queries")
+    }
+
+    fn count_duplicate_keys(
+        &self,
+        _db_file: &Path,
+        _table: &str,
+        _key_columns: &[String],
+    ) -> Result<usize, String> {
+        unreachable!("validate_meta must not run data queries")
+    }
 }
 
 /// The standard one-table dictionary these tests validate: `trades` with a
@@ -615,6 +629,17 @@ fn database_path_resolves_relative_to_the_dictionary() {
         fn classify(&self, canonical_type: &str) -> TypeCategory {
             fixture_classify(canonical_type)
         }
+        fn count_nulls(&self, _db: &Path, _table: &str, _col: &str) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
+        fn count_duplicate_keys(
+            &self,
+            _db: &Path,
+            _table: &str,
+            _keys: &[String],
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
     }
     let backend = PathCheckingFake {
         expect: dir.join("warehouse.duckdb"),
@@ -660,6 +685,17 @@ fn absolute_database_path_is_used_verbatim() {
         }
         fn classify(&self, canonical_type: &str) -> TypeCategory {
             fixture_classify(canonical_type)
+        }
+        fn count_nulls(&self, _db: &Path, _table: &str, _col: &str) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
+        fn count_duplicate_keys(
+            &self,
+            _db: &Path,
+            _table: &str,
+            _keys: &[String],
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
         }
     }
 

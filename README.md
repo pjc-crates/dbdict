@@ -72,9 +72,9 @@ Commands:
   back to the legacy `data-dict.yaml` name; defaults to the current
   directory).
 * `validate-meta` compares a dictionary against its database's column names
-  and types; `validate-data` will also check values (legacy format only, for
-  now). The data is located through the dictionary's `source`, so only the
-  dictionary is passed.
+  and types; `validate-data` also checks values — nulls in `required` columns
+  (D01) and duplicated `primary_key` values (D02). The data is located through
+  the dictionary's `source`, so only the dictionary is passed.
 * `resolve` expands every `typedef:` alias to its canonical DuckDB spelling —
   useful while authoring, and for seeing exactly what validation compares. (A
   legacy dictionary has no typedefs, so it resolves to nothing.)

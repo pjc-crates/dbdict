@@ -16,19 +16,41 @@ use crate::validate_meta::CheckResult;
 /// issue. Issues count every offender but only list this many.
 const SAMPLE_LIMIT: usize = 5;
 
-/// Validate a parquet file's values against a data dictionary.
+/// Validate the data's values against a data dictionary.
 ///
 /// Validates the spec first, then — when it is free of errors — runs every
-/// metadata-level check ([`crate::validate_meta`]) plus the value-level checks
-/// below: reading the columns and pages the checks imply and reporting, for
-/// example, nulls in a required column.
-pub fn validate_data(dict_path: &Path, table: Option<&str>) -> ProblemSet {
-    crate::compare_dataset(dict_path, table, |table, parquet_path, actual, problems| {
-        crate::validate_meta::meta_issues(table, actual, problems);
-        if let Err(e) = value_issues(table, parquet_path, actual, problems) {
-            problems.push(Problem::preflight(ProblemKind::Parquet, e.to_string()));
-        }
-    })
+/// metadata-level check ([`crate::validate_meta`]) plus the value-level checks:
+/// for example, nulls in a required column. A legacy (0.1.0) dictionary scans
+/// the parquet files its tables' `source`s point at, reading only the columns
+/// and pages the checks imply; a rich (0.2.0) one queries the DuckDB database
+/// its dictionary-level `source` names, through `duckdb` (the same backend
+/// seam [`crate::validate_meta`] takes).
+pub fn validate_data(
+    dict_path: &Path,
+    table: Option<&str>,
+    duckdb: &dyn crate::rich::DuckdbBackend,
+) -> ProblemSet {
+    let (mut problems, dict) = match crate::load_and_lower(dict_path) {
+        Ok(loaded) => loaded,
+        Err(problems) => return problems,
+    };
+    if dict.format == crate::model::Format::Rich {
+        crate::rich::check_data(dict_path, &dict, table, duckdb, &mut problems);
+        return problems;
+    }
+    crate::compare_parquet(
+        dict_path,
+        &dict,
+        table,
+        &mut problems,
+        |table, parquet_path, actual, problems| {
+            crate::validate_meta::meta_issues(table, actual, problems);
+            if let Err(e) = value_issues(table, parquet_path, actual, problems) {
+                problems.push(Problem::preflight(ProblemKind::Parquet, e.to_string()));
+            }
+        },
+    );
+    problems
 }
 
 /// Run the value-level checks for the dictionary's `table` against the data,

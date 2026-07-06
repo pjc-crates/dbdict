@@ -2,7 +2,7 @@
 //!
 //! [`validate_meta`] is the entry point; [`meta_issues`] is the reusable core
 //! that the data level ([`crate::validate_data`]) runs before its own value checks.
-//! The source checks (M04, M05) live in [`crate::compare_dataset`], which locates
+//! The source checks (M04, M05) live in `crate::compare_parquet`, which locates
 //! and reads each table's data before these column checks run.
 
 use std::path::Path;

@@ -314,3 +314,94 @@ fn spec_dies_quietly_when_stdout_pipe_closes() {
         output.status
     );
 }
+
+/// The rich data level through the binary: seeded D01 (nulls in a required
+/// column) and D02 (duplicated primary key) violations both report, with
+/// their codes, and fail the run.
+#[test]
+fn validate_data_rich_reports_d01_and_d02() {
+    let dir = temp_fixture_dir("rich-data");
+
+    let conn = duckdb::Connection::open(dir.join("warehouse.duckdb")).expect("create db");
+    conn.execute_batch(
+        "CREATE TABLE trades (id BIGINT, qty BIGINT);
+         INSERT INTO trades VALUES (1, 10), (1, NULL), (2, 20);",
+    )
+    .expect("create fixture");
+    drop(conn); // flush and close before the binary opens it read-only
+
+    let dict = dir.join("dbdict.yaml");
+    std::fs::write(
+        &dict,
+        indoc::indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: trades
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: qty
+                    type: BIGINT
+                    constraints: [required]
+        "#},
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("validate-data")
+        .arg(&dict)
+        .output()
+        .expect("failed to run dbdict");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    insta::assert_snapshot!(sanitize(&stderr, &dict.display().to_string()));
+}
+
+/// The same fixture without the violations passes the data level cleanly.
+#[test]
+fn validate_data_rich_clean_passes() {
+    let dir = temp_fixture_dir("rich-data-clean");
+
+    let conn = duckdb::Connection::open(dir.join("warehouse.duckdb")).expect("create db");
+    conn.execute_batch(
+        "CREATE TABLE trades (id BIGINT, qty BIGINT);
+         INSERT INTO trades VALUES (1, 10), (2, 20);",
+    )
+    .expect("create fixture");
+    drop(conn);
+
+    let dict = dir.join("dbdict.yaml");
+    std::fs::write(
+        &dict,
+        indoc::indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: trades
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: qty
+                    type: BIGINT
+                    constraints: [required]
+        "#},
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dbdict"))
+        .arg("validate-data")
+        .arg(&dict)
+        .output()
+        .expect("failed to run dbdict");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stderr:\n{stderr}");
+}

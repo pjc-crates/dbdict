@@ -9,8 +9,9 @@
 //! metadata or data mismatch). A level pushes its problems and stops the run
 //! short by returning early; the meta and data levels validate the spec first
 //! and compare against a dataset only when it is free of errors. This module
-//! holds the shared [`Level`] and the `compare_dataset` driver the meta and
-//! data levels build on.
+//! holds the shared [`Level`] and the `compare_parquet` driver the legacy
+//! meta and data levels build on (the rich levels drive `rich::check_meta` /
+//! `rich::check_data` through the [`rich::DuckdbBackend`] seam instead).
 
 use std::path::{Path, PathBuf};
 
@@ -83,33 +84,6 @@ pub(crate) fn compare_parquet(
             checks(table, &parquet_path, &actual, problems);
         }
     }
-}
-
-/// The `validate_data` driver: spec first, then the legacy parquet comparison.
-///
-/// The rich format's data level is not built yet (the round-trip rework covers
-/// metadata only), so a rich document gets one honest pre-flight instead of a
-/// misleading M04 per table telling the user to add a per-table `source` the
-/// rich schema rejects.
-pub(crate) fn compare_dataset(
-    dict_path: &Path,
-    table: Option<&str>,
-    checks: impl Fn(&Table, &Path, &[(String, String)], &mut ProblemSet),
-) -> ProblemSet {
-    let (mut problems, dict) = match load_and_lower(dict_path) {
-        Ok(loaded) => loaded,
-        Err(problems) => return problems,
-    };
-    if dict.format == model::Format::Rich {
-        problems.push(Problem::preflight(
-            ProblemKind::RichFormatUnsupported,
-            "the rich (0.2.0) format is not yet supported by data validation — \
-             `validate-spec` and `validate-meta` cover it today",
-        ));
-        return problems;
-    }
-    compare_parquet(dict_path, &dict, table, &mut problems, checks);
-    problems
 }
 
 /// Locate and read a table's data from its `source`, returning the resolved

@@ -81,6 +81,19 @@ impl dbdict::rich::DuckdbBackend for NoDuckdb {
     fn classify(&self, _canonical_type: &str) -> dbdict::rich::TypeCategory {
         unreachable!("legacy validation must not classify duckdb types")
     }
+
+    fn count_nulls(&self, _db_file: &Path, _table: &str, _column: &str) -> Result<usize, String> {
+        unreachable!("legacy validation must not query a duckdb database")
+    }
+
+    fn count_duplicate_keys(
+        &self,
+        _db_file: &Path,
+        _table: &str,
+        _key_columns: &[String],
+    ) -> Result<usize, String> {
+        unreachable!("legacy validation must not query a duckdb database")
+    }
 }
 
 /// Write `yaml` to `<dir>/dict.yaml` and return the path.

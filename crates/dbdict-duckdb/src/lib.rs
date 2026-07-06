@@ -11,5 +11,6 @@
 mod native;
 
 pub use native::{
-    NativeDuckdb, TypedefExpansion, classify, expand_typedefs, instantiate, read_schema,
+    NativeDuckdb, TypedefExpansion, classify, count_duplicate_keys, count_nulls, expand_typedefs,
+    instantiate, read_schema,
 };

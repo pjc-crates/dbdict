@@ -34,40 +34,53 @@ small, independent warm-up; both areas get touched again later in the session.
 - **verify:** `cargo test --workspace` green (209 passed); `target/debug/
   dbdict spec | head -1` exits 141 with empty stderr — PASSED
 
-### phase 2: rich data level — D01 + D02
+### phase 2: rich data level — D01 + D02 — DONE 2026-07-06T14:36:26+12:00
 replaces the `RichFormatUnsupported` pre-flight with real data checks.
 
-- [ ] spec D02 in site/validation.md first (error): the primary-key
+- [x] spec D02 in site/validation.md first (error): the primary-key
       column set of a table contains duplicate values — composite when
-      multiple columns are marked `primary_key`, per SQL semantics.
-      D01 text already exists; confirm it reads correctly for the rich path
-- [ ] extend the `DuckdbBackend` trait (crates/dbdict/src/rich.rs) with
+      multiple columns are marked `primary_key`, per SQL semantics; count
+      = distinct duplicated key values. D01 text extended: legacy lists
+      sample row numbers, rich reports a count (a live table has no
+      stable row numbers). also replaced the "data level not built yet"
+      note with how the rich data level works
+- [x] extend the `DuckdbBackend` trait (crates/dbdict/src/rich.rs) with
       data-level methods, keeping core duckdb-free:
       - `count_nulls(db_file, table, column) -> Result<usize, String>`
-      - `count_duplicate_keys(db_file, table, columns) -> Result<usize, String>`
+      - `count_duplicate_keys(db_file, table, key_columns) -> Result<usize, String>`
 
 > decision: explicit named methods over a generic `query_count(sql)` seam —
 > core must not build SQL strings (identifier quoting is backend knowledge),
 > and two narrow methods are easier to fake in tests. revisit if a third
 > data check makes the trait feel like a query catalogue.
 
-- [ ] implement both methods in crates/dbdict-duckdb/src/native.rs
-      (reuse `quote_ident`; read-only connection to the source db)
-- [ ] new `check_data` in crates/dbdict/src/rich.rs mirroring `check_meta`:
-      resolve dict-level source → match tables via `names_eq` → for each
-      matched table run D01 per required/primary_key column and D02 once
-      over the table's primary-key column set; emit located problems with
-      codes D01/D02
-- [ ] route rich dicts in `compare_dataset` (crates/dbdict/src/lib.rs
-      ~line 90) to `rich::check_data`; delete the `RichFormatUnsupported`
-      pre-flight and its `ProblemKind` variant if now unreachable
-- [ ] tests: fake-backend unit tests in core (violations, clean pass,
-      unreadable db); dbdict-duckdb integration tests with real data
-      (nulls in required col → D01; duplicate single + composite PK → D02);
-      cli e2e snapshot for `validate-data` on a rich fixture
-- **verify:** `cargo test --workspace` green; `dbdict validate-data` on a
-  rich fixture with seeded violations reports D01 + D02 and exits nonzero;
-  clean fixture exits 0; legacy parquet fixtures unchanged
+- [x] implement both methods in crates/dbdict-duckdb/src/native.rs
+      (reuse `quote_ident`; extracted `open_read_only` shared with
+      `read_schema`; `query_count` helper)
+- [x] new `check_data` in crates/dbdict/src/rich.rs mirroring `check_meta`:
+      runs `check_meta` first, then re-resolves the source *quietly*
+      (M04/M05/M06 already reported) → for each db-present table run D01
+      per required/primary_key column and D02 once over the primary-key
+      column set; queries use the database's own name spellings, problems
+      locate at dictionary spans; query failures report as M05-shaped
+      `UnreadableSource` at the table
+- [x] `validate_data` now takes `&dyn DuckdbBackend` (mirrors
+      `validate_meta`); rich routes to `rich::check_data`; deleted
+      `compare_dataset` and the `RichFormatUnsupported` variant + its
+      transitional test; CLI passes `NativeDuckdb`
+- [x] tests: 8 fake-backend tests in tests/rich_data.rs (D01/D02/composite/
+      clean/only-required-queried/no-pk-no-query/query-failure/missing-table);
+      7 real-duckdb tests in dbdict-duckdb tests/data_queries.rs (incl.
+      case-insensitive identifier match and hostile-name quoting); 2 cli
+      e2e tests with reviewed snapshot (D01 anchored at the `required`
+      constraint, D02 at the key column)
+- also: legacy validate_data tests now pass `&NoDuckdb`; rich_meta fakes
+      gained unreachable data-method stubs (meta must never query values);
+      README validate-data paragraph updated; stale `compare_dataset` doc
+      references fixed
+- **verify:** `cargo test --workspace` green (225 passed); `dbdict
+  validate-data` on the seeded fixture reports D01 + D02, exits 1; clean
+  fixture exits 0; legacy parquet fixtures unchanged — PASSED
 
 ### phase 3: DDL generator — crates/dbdict-ddl + `dbdict ddl`
 first generator; pressure-tests the public `load_and_lower` model API.

@@ -150,10 +150,6 @@ pub enum ProblemKind {
     ExtraInData { actual: String },
     /// `M04` — a table validated against data declares no `source`.
     MissingSource,
-    /// A rich (0.2.0) document reached the *data* level, which is not built
-    /// for it yet (the duckdb round-trip covers spec and metadata).
-    /// Transitional: removed when the rich data level lands.
-    RichFormatUnsupported,
     /// `M05` — a table's `source` is declared but its data can't be read (the
     /// `parquet` file is absent or unreadable, or the duckdb database can't
     /// be opened).
@@ -174,7 +170,14 @@ pub enum ProblemKind {
     InvalidColumnType,
     /// `D01` — a `required` (or `primary_key`) column contains nulls. `rows`
     /// lists the first few offending row numbers (1-based); `count` is the total.
+    /// The rich path counts via a database query, which has no stable row
+    /// numbers to sample, so its `rows` is always empty.
     NullsInRequired { count: usize, rows: Vec<usize> },
+    /// `D02` (rich format) — the table's `primary_key` column set (one
+    /// composite key when several columns carry the constraint) has values
+    /// occurring in more than one row; `count` is how many distinct key
+    /// values are duplicated.
+    DuplicateKey { count: usize },
 }
 
 impl ProblemKind {
@@ -193,6 +196,7 @@ impl ProblemKind {
             ProblemKind::InvalidTypedef => "M08",
             ProblemKind::InvalidColumnType => "M09",
             ProblemKind::NullsInRequired { .. } => "D01",
+            ProblemKind::DuplicateKey { .. } => "D02",
             _ => return None,
         })
     }
@@ -211,7 +215,7 @@ impl ProblemKind {
             | ProblemKind::ExtraTable
             | ProblemKind::InvalidTypedef
             | ProblemKind::InvalidColumnType => Level::Meta,
-            ProblemKind::NullsInRequired { .. } => Level::Data,
+            ProblemKind::NullsInRequired { .. } | ProblemKind::DuplicateKey { .. } => Level::Data,
             _ => return None,
         })
     }

@@ -1,4 +1,4 @@
-//! Rich-format (0.2.0) metadata validation: the duckdb round-trip seam.
+//! Rich-format (0.2.0) metadata and data validation: the duckdb seam.
 //!
 //! The rich format compares DESCRIBE-to-DESCRIBE. The dictionary is
 //! instantiated in a scratch in-memory database (`CREATE TYPE` for typedefs,
@@ -84,8 +84,14 @@ pub enum TypeCategory {
     Other,
 }
 
-/// What the rich metadata level asks of duckdb. Implemented by
+/// What the rich metadata and data levels ask of duckdb. Implemented by
 /// `dbdict-duckdb`; faked in core tests.
+///
+/// The two data-level methods are deliberately narrow, named queries rather
+/// than a generic "run this SQL" seam: identifier quoting and SQL building
+/// are backend knowledge the core must not own, and narrow methods are easy
+/// to fake. Revisit if a third data check makes this read like a query
+/// catalogue.
 pub trait DuckdbBackend {
     /// Build the scratch database from the dictionary's typedefs and tables,
     /// and DESCRIBE what was created.
@@ -99,6 +105,20 @@ pub trait DuckdbBackend {
     /// Classify a canonical type (as returned by [`Self::instantiate`]) for
     /// the descriptive-key checks (S07/S08/S12–S14 in rich mode).
     fn classify(&self, canonical_type: &str) -> TypeCategory;
+
+    /// D01 — how many rows of `table` are null in `column`. `Err` is the
+    /// human-readable reason the query failed.
+    fn count_nulls(&self, db_file: &Path, table: &str, column: &str) -> Result<usize, String>;
+
+    /// D02 — how many distinct values of `key_columns` (one composite key)
+    /// occur in more than one row of `table`. `Err` is the human-readable
+    /// reason the query failed.
+    fn count_duplicate_keys(
+        &self,
+        db_file: &Path,
+        table: &str,
+        key_columns: &[String],
+    ) -> Result<usize, String>;
 }
 
 /// The rich twin of the legacy parquet comparison: resolve the dictionary's
@@ -215,6 +235,161 @@ pub(crate) fn check_meta(
             ));
         }
     }
+}
+
+/// The rich data level: every metadata check, then the value-level `D##`
+/// checks as queries against the real database. The queries use the
+/// database's own spelling of table and column names (duckdb folds case, but
+/// exact spellings keep the quoting trivially right); problems are located
+/// at the dictionary's spans.
+pub(crate) fn check_data(
+    dict_path: &Path,
+    dict: &DataDict,
+    table: Option<&str>,
+    duckdb: &dyn DuckdbBackend,
+    out: &mut ProblemSet,
+) {
+    check_meta(dict_path, dict, table, duckdb, out);
+    // re-resolve the source quietly: check_meta already reported M04 (no
+    // source) and M05 (unreadable), so a missing piece here only means there
+    // is nothing to query
+    let Some(source) = &dict.source else {
+        return;
+    };
+    let base_dir = dict_path.parent().unwrap_or_else(|| Path::new(""));
+    let db_file = base_dir.join(&source.file.value);
+    let Ok(actual) = duckdb.read_schema(&db_file) else {
+        return;
+    };
+    for dict_table in &dict.tables {
+        if !table_selected(table, &dict_table.name.value) {
+            continue;
+        }
+        // a table absent from the database already has its M06; skip it
+        let Some(actual_table) = actual
+            .iter()
+            .find(|a| names_eq(&a.name, &dict_table.name.value))
+        else {
+            continue;
+        };
+        check_table_data(dict_table, actual_table, &db_file, duckdb, out);
+    }
+}
+
+/// The `D##` checks for one table: D01 (nulls in required columns) and D02
+/// (duplicate primary-key values).
+fn check_table_data(
+    dict_table: &Table,
+    actual_table: &TableSchema,
+    db_file: &Path,
+    duckdb: &dyn DuckdbBackend,
+    out: &mut ProblemSet,
+) {
+    // the database's own spelling of a dictionary column's name, if present.
+    // a column missing from the database already has its M02; skip it
+    let db_column = |dict_name: &str| {
+        actual_table
+            .columns
+            .iter()
+            .map(|(db_name, _)| db_name.as_str())
+            .find(|db_name| names_eq(dict_name, db_name))
+    };
+
+    // D01 — a required (or primary_key) column must contain no nulls
+    for col in &dict_table.columns {
+        if !col.is_required_implied() {
+            continue;
+        }
+        let Some(db_name) = db_column(&col.name.value) else {
+            continue;
+        };
+        match duckdb.count_nulls(db_file, &actual_table.name, db_name) {
+            Ok(0) => {}
+            Ok(count) => {
+                let plural = if count == 1 { "" } else { "s" };
+                out.push_located(
+                    ProblemKind::NullsInRequired {
+                        count,
+                        // a query result has no stable row numbers to sample
+                        rows: Vec::new(),
+                    },
+                    Severity::Error,
+                    "A required column must not contain nulls.",
+                    format!("has {count} null value{plural}"),
+                    [
+                        dict_table.name.span.clone(),
+                        col.name.span.clone(),
+                        requiredness_span(col),
+                    ],
+                );
+            }
+            Err(reason) => push_query_failure(dict_table, reason, out),
+        }
+    }
+
+    // D02 — the primary_key columns form one composite key that must be
+    // unique across rows. skipped unless every key column is in the database
+    // (a missing one already has its M02, and the key can't be queried whole)
+    let key_columns: Vec<&crate::model::Column> = dict_table
+        .columns
+        .iter()
+        .filter(|c| c.has(crate::model::Constraint::PrimaryKey))
+        .collect();
+    if key_columns.is_empty() {
+        return;
+    }
+    let db_names: Option<Vec<String>> = key_columns
+        .iter()
+        .map(|c| db_column(&c.name.value).map(str::to_string))
+        .collect();
+    let Some(db_names) = db_names else {
+        return;
+    };
+    match duckdb.count_duplicate_keys(db_file, &actual_table.name, &db_names) {
+        Ok(0) => {}
+        Ok(count) => {
+            let plural = if count == 1 { "" } else { "s" };
+            let mut spans = vec![dict_table.name.span.clone()];
+            for col in &key_columns {
+                spans.push(col.name.span.clone());
+            }
+            out.push_located(
+                ProblemKind::DuplicateKey { count },
+                Severity::Error,
+                "A primary key must be unique across rows.",
+                format!("has {count} duplicated key value{plural}"),
+                spans,
+            );
+        }
+        Err(reason) => push_query_failure(dict_table, reason, out),
+    }
+}
+
+/// A data query the backend could not answer. Reported like M05 (the source
+/// database failed us), located at the table whose check was lost.
+fn push_query_failure(dict_table: &Table, reason: String, out: &mut ProblemSet) {
+    out.push_located(
+        ProblemKind::UnreadableSource,
+        Severity::Error,
+        "A dictionary's `source` must point at a queryable DuckDB database.",
+        reason,
+        [dict_table.name.span.clone()],
+    );
+}
+
+/// The span of the constraint that makes `col` required (`required` or
+/// `primary_key`), falling back to the column name. The legacy twin lives in
+/// `validate_data.rs` (`nulls_in_required_data`).
+fn requiredness_span(col: &crate::model::Column) -> SourceInfo {
+    col.constraints
+        .iter()
+        .find(|c| {
+            matches!(
+                c.value,
+                crate::model::Constraint::Required | crate::model::Constraint::PrimaryKey
+            )
+        })
+        .map_or_else(|| col.name.span.clone(), |c| c.span.clone())
 }
 
 /// Whether a dictionary name and a database name refer to the same object.

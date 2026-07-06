@@ -115,7 +115,9 @@ fn main() -> ExitCode {
         Command::ValidateMeta(args) => run_validate(args, |path, table| {
             dbdict::validate_meta(path, table, &dbdict_duckdb::NativeDuckdb)
         }),
-        Command::ValidateData(args) => run_validate(args, dbdict::validate_data),
+        Command::ValidateData(args) => run_validate(args, |path, table| {
+            dbdict::validate_data(path, table, &dbdict_duckdb::NativeDuckdb)
+        }),
         Command::Resolve { dict } => run_resolve(dict),
         Command::Spec => {
             print!("{}", dbdict::SPEC_MD);

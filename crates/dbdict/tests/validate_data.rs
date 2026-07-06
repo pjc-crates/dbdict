@@ -6,7 +6,7 @@
 //! and data levels are genuinely distinct.
 
 mod common;
-use common::{assert_snapshot, temp_dir, write_dict};
+use common::{NoDuckdb, assert_snapshot, temp_dir, write_dict};
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -26,7 +26,7 @@ fn check_column(
     column: &str,
 ) -> ProblemSet {
     let yaml = build_column(schema_col, write, column);
-    validate_data(&yaml, None)
+    validate_data(&yaml, None, &NoDuckdb)
 }
 
 /// Write a one-column parquet file (`schema_col` is that column's line in a
@@ -97,43 +97,8 @@ fn write_double_with_null(col: &mut SerializedColumnWriter) {
         .unwrap();
 }
 
-// A rich (0.2.0) document reaching the data level reports one honest
-// "not yet supported" pre-flight — the duckdb round-trip covers the metadata
-// level only so far. Goes away when the rich data level is built.
-#[test]
-fn rich_format_gets_unsupported_preflight() {
-    let dir = temp_dir();
-    let yaml = common::write_yaml(
-        &dir,
-        indoc! {"
-            $version: \"0.2.0\"
-            $learn_more: http://data-dict.tidyverse.org/
-            source:
-              duckdb:
-                file: warehouse.duckdb
-            tables:
-              - name: trades
-                columns:
-                  - name: qty
-                    type: BIGINT
-        "},
-    );
-
-    let problems = validate_data(&yaml, None);
-    assert_eq!(problems.status(), Status::Error);
-    assert_eq!(problems.items.len(), 1, "got {:?}", problems.items);
-    let problem = &problems.items[0];
-    assert!(
-        matches!(problem.kind, ProblemKind::RichFormatUnsupported),
-        "got {:?}",
-        problem.kind
-    );
-    assert!(
-        problem.message.contains("not yet supported"),
-        "got {:?}",
-        problem.message
-    );
-}
+// the transitional "rich data level not built" pre-flight test lived here;
+// the rich data level now exists and is tested in `rich_data.rs`
 
 /// The defining difference between the two levels: a `required` column with
 /// nulls is a *value* problem, so it is invisible to `validate-meta` (which
@@ -156,7 +121,7 @@ fn meta_ignores_null_values_that_data_catches() {
     assert_eq!(meta.status(), Status::Ok, "meta got {:?}", meta.items);
 
     // Data level: the null in a required column is an error.
-    let data = validate_data(&yaml, None);
+    let data = validate_data(&yaml, None, &NoDuckdb);
     assert_eq!(data.status(), Status::Error);
     assert!(
         matches!(
@@ -184,7 +149,7 @@ fn nulls_in_required_column_reported() {
               range: [0, 100]
         "},
     );
-    let result = validate_data(&yaml, None);
+    let result = validate_data(&yaml, None, &NoDuckdb);
 
     assert_eq!(result.status(), Status::Error);
     assert!(
@@ -216,7 +181,7 @@ fn missing_null_statistics_falls_back_to_data_scan() {
             .build(),
     );
 
-    let result = validate_data(&yaml, None);
+    let result = validate_data(&yaml, None, &NoDuckdb);
     assert!(matches!(
         result.items.as_slice(),
         [Problem { kind: ProblemKind::NullsInRequired { count: 1, rows }, .. }]

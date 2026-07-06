@@ -1,0 +1,21 @@
+---
+source: crates/dbdict-cli/tests/cli.rs
+assertion_line: 362
+expression: "sanitize(&stderr, &dict.display().to_string())"
+---
+error: [D01] A required column must not contain nulls.
+  --> <fixture>:14:23
+   |
+ 7 |   - name: trades
+...
+12 |       - name: qty
+13 |         type: BIGINT
+14 |         constraints: [required]
+   |                       ^^^^^^^^ has 1 null value
+error: [D02] A primary key must be unique across rows.
+ --> <fixture>:9:15
+  |
+7 |   - name: trades
+8 |     columns:
+9 |       - name: id
+  |               ^^ has 1 duplicated key value
