@@ -59,17 +59,24 @@
   new tests demonstrably red before implementation; clippy + fmt clean
   — PASSED
 
-### phase 2: CLI e2e + docs
-- [ ] extend the rich-data CLI e2e fixtures (crates/dbdict-cli/tests/cli.rs):
+### phase 2: CLI e2e + docs — DONE 2026-07-07T07:12:53+12:00
+- [x] extend the rich-data CLI e2e fixtures (crates/dbdict-cli/tests/cli.rs):
       seeded fixture gains a `unique` column with a duplicated value →
       snapshot shows D03 anchored at the `unique` constraint; clean
       fixture gains the same column with distinct values plus repeated
       NULLs → still passes (locks NULL exclusion end to end)
-- [ ] README.md: validate-data bullet mentions duplicate `unique` values
+- [x] README.md: validate-data bullet mentions duplicate `unique` values
       (D03) alongside D01/D02
-- [ ] site/spec.md constraints section: `unique` line points at D03 the
+- [x] site/spec.md constraints section: `unique` line points at D03 the
       way `primary_key` behaviour is documented in validation.md
+- also: seeded test renamed `validate_data_rich_reports_d01_and_d02` →
+      `..._d01_d02_and_d03` so the name matches its coverage; the old
+      insta snapshot was deleted with the rename (snapshot names derive
+      from the test fn name)
+- also: spec.md's constraint bullets had no per-check cross-references
+      (only the declare-then-check paragraph links validation.md), so the
+      `unique` bullet got the first one — NULL semantics + D03 pointer
 - **verify:** `cargo test --workspace` green; snapshots reviewed before
   accepting; seeded fixture exits 1 reporting D01+D02+D03, clean fixture
   exits 0; `cargo clippy --workspace --all-targets` + `cargo fmt --check`
-  clean
+  clean — PASSED (258 tests, clippy + fmt clean)

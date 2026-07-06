@@ -367,7 +367,9 @@ constraints are:
   the current table, if a self-join). The specific relationship is defined in
   [`relationships`](#relationships).
 * `required`: the column does not contain null/missing values.
-* `unique`: the column's values are distinct (no duplicates).
+* `unique`: the column's values are distinct (no duplicates). NULLs are
+  excluded, per SQL `UNIQUE` semantics. `dbdict validate-data` checks this
+  against the data (see D03 in [Validation](validation.md)).
 
 ## Relationships
 

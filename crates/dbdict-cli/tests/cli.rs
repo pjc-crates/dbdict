@@ -316,16 +316,16 @@ fn spec_dies_quietly_when_stdout_pipe_closes() {
 }
 
 /// The rich data level through the binary: seeded D01 (nulls in a required
-/// column) and D02 (duplicated primary key) violations both report, with
-/// their codes, and fail the run.
+/// column), D02 (duplicated primary key), and D03 (duplicated value in a
+/// `unique` column) violations all report, with their codes, and fail the run.
 #[test]
-fn validate_data_rich_reports_d01_and_d02() {
+fn validate_data_rich_reports_d01_d02_and_d03() {
     let dir = temp_fixture_dir("rich-data");
 
     let conn = duckdb::Connection::open(dir.join("warehouse.duckdb")).expect("create db");
     conn.execute_batch(
-        "CREATE TABLE trades (id BIGINT, qty BIGINT);
-         INSERT INTO trades VALUES (1, 10), (1, NULL), (2, 20);",
+        "CREATE TABLE trades (id BIGINT, qty BIGINT, ref VARCHAR);
+         INSERT INTO trades VALUES (1, 10, 'ord-1'), (1, NULL, 'ord-1'), (2, 20, 'ord-2');",
     )
     .expect("create fixture");
     drop(conn); // flush and close before the binary opens it read-only
@@ -348,6 +348,9 @@ fn validate_data_rich_reports_d01_and_d02() {
                   - name: qty
                     type: BIGINT
                     constraints: [required]
+                  - name: ref
+                    type: VARCHAR
+                    constraints: [unique]
         "#},
     )
     .unwrap();
@@ -363,14 +366,17 @@ fn validate_data_rich_reports_d01_and_d02() {
 }
 
 /// The same fixture without the violations passes the data level cleanly.
+/// The `unique` column holds distinct values plus *repeated NULLs* — locking
+/// end to end that D03 follows SQL UNIQUE semantics (NULLs compare as
+/// distinct, so an optional-but-unique column may hold many).
 #[test]
 fn validate_data_rich_clean_passes() {
     let dir = temp_fixture_dir("rich-data-clean");
 
     let conn = duckdb::Connection::open(dir.join("warehouse.duckdb")).expect("create db");
     conn.execute_batch(
-        "CREATE TABLE trades (id BIGINT, qty BIGINT);
-         INSERT INTO trades VALUES (1, 10), (2, 20);",
+        "CREATE TABLE trades (id BIGINT, qty BIGINT, ref VARCHAR);
+         INSERT INTO trades VALUES (1, 10, 'ord-1'), (2, 20, NULL), (3, 30, NULL);",
     )
     .expect("create fixture");
     drop(conn);
@@ -393,6 +399,9 @@ fn validate_data_rich_clean_passes() {
                   - name: qty
                     type: BIGINT
                     constraints: [required]
+                  - name: ref
+                    type: VARCHAR
+                    constraints: [unique]
         "#},
     )
     .unwrap();

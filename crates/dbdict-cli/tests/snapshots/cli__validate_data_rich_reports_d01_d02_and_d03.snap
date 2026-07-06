@@ -1,6 +1,6 @@
 ---
 source: crates/dbdict-cli/tests/cli.rs
-assertion_line: 362
+assertion_line: 365
 expression: "sanitize(&stderr, &dict.display().to_string())"
 ---
 error: [D01] A required column must not contain nulls.
@@ -19,3 +19,12 @@ error: [D02] A primary key must be unique across rows.
 8 |     columns:
 9 |       - name: id
   |               ^^ has 1 duplicated key value
+error: [D03] A unique column must not contain duplicate values.
+  --> <fixture>:17:23
+   |
+ 7 |   - name: trades
+...
+15 |       - name: ref
+16 |         type: VARCHAR
+17 |         constraints: [unique]
+   |                       ^^^^^^ has 1 duplicated value
