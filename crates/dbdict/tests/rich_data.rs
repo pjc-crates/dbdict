@@ -13,10 +13,22 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use dbdict::join_expr::JoinOp;
 use dbdict::model::DataDict;
-use dbdict::rich::{DuckdbBackend, Instantiated, TableSchema, TypeCategory};
+use dbdict::rich::{DuckdbBackend, Instantiated, OrientedConjunct, TableSchema, TypeCategory};
 use dbdict::{Problem, ProblemKind, Status, validate_data};
 use indoc::indoc;
+
+/// render an operator the way the join text spells it, for call-log keys
+fn op_str(op: JoinOp) -> &'static str {
+    match op {
+        JoinOp::Eq => "=",
+        JoinOp::Ge => ">=",
+        JoinOp::Le => "<=",
+        JoinOp::Gt => ">",
+        JoinOp::Lt => "<",
+    }
+}
 
 /// a `(column, canonical type)` pair, as `DESCRIBE` would report it
 fn col(name: &str, canonical_type: &str) -> (String, String) {
@@ -39,6 +51,11 @@ struct FakeDuckdb {
     /// `"fk_table.fk_column->pk_table.pk_column"` → orphan count returned by
     /// `count_orphaned_values`
     orphan_counts: HashMap<String, usize>,
+    /// `"probe_table->other_table"` → over-match count returned by
+    /// `count_overmatched_rows`
+    overmatch_counts: HashMap<String, usize>,
+    /// when set, every `count_overmatched_rows` call fails with this reason
+    overmatch_error: Option<String>,
     /// every `count_duplicate_keys` call: `(table, key columns)`
     dup_calls: RefCell<Vec<(String, Vec<String>)>>,
     /// every `count_nulls` call: `"table.column"`
@@ -48,6 +65,9 @@ struct FakeDuckdb {
     /// every `count_orphaned_values` call:
     /// `"fk_table.fk_column->pk_table.pk_column"`
     orphan_calls: RefCell<Vec<String>>,
+    /// every `count_overmatched_rows` call, with its oriented conjuncts:
+    /// `"probe_table->other_table: col<op>col,…"`
+    overmatch_calls: RefCell<Vec<String>>,
 }
 
 impl FakeDuckdb {
@@ -60,10 +80,13 @@ impl FakeDuckdb {
             dup_key_count: 0,
             dup_value_counts: HashMap::new(),
             orphan_counts: HashMap::new(),
+            overmatch_counts: HashMap::new(),
+            overmatch_error: None,
             dup_calls: RefCell::new(Vec::new()),
             null_calls: RefCell::new(Vec::new()),
             value_calls: RefCell::new(Vec::new()),
             orphan_calls: RefCell::new(Vec::new()),
+            overmatch_calls: RefCell::new(Vec::new()),
         }
     }
 }
@@ -121,6 +144,29 @@ impl DuckdbBackend for FakeDuckdb {
         let key = format!("{fk_table}.{fk_column}->{pk_table}.{pk_column}");
         self.orphan_calls.borrow_mut().push(key.clone());
         Ok(self.orphan_counts.get(&key).copied().unwrap_or(0))
+    }
+
+    fn count_overmatched_rows(
+        &self,
+        _db_file: &Path,
+        probe_table: &str,
+        other_table: &str,
+        conjuncts: &[OrientedConjunct],
+    ) -> Result<usize, String> {
+        // the log keeps the oriented conjuncts so tests can assert both the
+        // probe direction and the operator flip
+        let rendered: Vec<String> = conjuncts
+            .iter()
+            .map(|c| format!("{}{}{}", c.probe_column, op_str(c.op), c.other_column))
+            .collect();
+        let key = format!("{probe_table}->{other_table}");
+        self.overmatch_calls
+            .borrow_mut()
+            .push(format!("{key}: {}", rendered.join(",")));
+        if let Some(reason) = &self.overmatch_error {
+            return Err(reason.clone());
+        }
+        Ok(self.overmatch_counts.get(&key).copied().unwrap_or(0))
     }
 }
 
@@ -555,6 +601,16 @@ fn failing_duplicate_values_query_is_reported() {
             self.inner
                 .count_orphaned_values(db, fk_table, fk_col, pk_table, pk_col)
         }
+        fn count_overmatched_rows(
+            &self,
+            db: &Path,
+            probe_table: &str,
+            other_table: &str,
+            conjuncts: &[OrientedConjunct],
+        ) -> Result<usize, String> {
+            self.inner
+                .count_overmatched_rows(db, probe_table, other_table, conjuncts)
+        }
     }
 
     let dir = temp_dir();
@@ -623,6 +679,16 @@ fn failing_data_query_is_reported() {
         ) -> Result<usize, String> {
             self.inner
                 .count_orphaned_values(db, fk_table, fk_col, pk_table, pk_col)
+        }
+        fn count_overmatched_rows(
+            &self,
+            db: &Path,
+            probe_table: &str,
+            other_table: &str,
+            conjuncts: &[OrientedConjunct],
+        ) -> Result<usize, String> {
+            self.inner
+                .count_overmatched_rows(db, probe_table, other_table, conjuncts)
         }
     }
 
@@ -1068,6 +1134,16 @@ fn failing_orphan_query_is_reported() {
         ) -> Result<usize, String> {
             Err("query interrupted".to_string())
         }
+        fn count_overmatched_rows(
+            &self,
+            db: &Path,
+            probe_table: &str,
+            other_table: &str,
+            conjuncts: &[OrientedConjunct],
+        ) -> Result<usize, String> {
+            self.inner
+                .count_overmatched_rows(db, probe_table, other_table, conjuncts)
+        }
     }
 
     let dir = temp_dir();
@@ -1075,6 +1151,348 @@ fn failing_orphan_query_is_reported() {
     let backend = FailingOrphans {
         inner: FakeDuckdb::clean(fk_instantiated(), fk_db()),
     };
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert!(
+        problems
+            .items
+            .iter()
+            .any(|p| matches!(p.kind, ProblemKind::UnreadableSource)
+                && p.message.contains("query interrupted")),
+        "got {:?}",
+        problems.items
+    );
+}
+
+// --- D05 ---------------------------------------------------------------------
+
+/// The standard range-join fixture: `events.date` falls inside a period,
+/// declared `many-to-one` — overlapping periods would violate it. `start` is
+/// `unique` so S06's permissive range rule is satisfied and the diagnostics
+/// isolate D05.
+fn write_range_dict(dir: &Path) -> PathBuf {
+    write_yaml(
+        dir,
+        indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: events
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: date
+                    type: DATE
+              - name: periods
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: start
+                    type: DATE
+                    constraints: [unique]
+                  - name: end
+                    type: DATE
+            relationships:
+              - join: events.date >= periods.start AND events.date <= periods.end
+                cardinality: many-to-one
+        "#},
+    )
+}
+
+fn range_events_expected() -> Vec<(String, String)> {
+    vec![col("id", "BIGINT"), col("date", "DATE")]
+}
+
+fn range_periods_expected() -> Vec<(String, String)> {
+    vec![
+        col("id", "BIGINT"),
+        col("start", "DATE"),
+        col("end", "DATE"),
+    ]
+}
+
+fn range_db() -> Result<Vec<TableSchema>, String> {
+    Ok(vec![
+        TableSchema {
+            name: "events".to_string(),
+            columns: range_events_expected(),
+        },
+        TableSchema {
+            name: "periods".to_string(),
+            columns: range_periods_expected(),
+        },
+    ])
+}
+
+fn range_instantiated() -> Instantiated {
+    Instantiated {
+        tables: vec![range_events_expected(), range_periods_expected()],
+        failures: Vec::new(),
+    }
+}
+
+/// over-matching rows violate the declared cardinality: `many-to-one` probes
+/// the left ("many") side, and the range conjuncts cross the seam unflipped
+#[test]
+fn overmatching_rows_violate_declared_cardinality() {
+    let dir = temp_dir();
+    let yaml = write_range_dict(&dir);
+    let mut backend = FakeDuckdb::clean(range_instantiated(), range_db());
+    backend
+        .overmatch_counts
+        .insert("events->periods".to_string(), 2);
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert!(
+        matches!(
+            problems.items.as_slice(),
+            [Problem { code: Some(code), kind: ProblemKind::CardinalityViolation { count: 2 }, .. }]
+                if *code == "D05"
+        ),
+        "got {:?}",
+        problems.items
+    );
+    // the message names the declared cardinality and the over-matched side
+    let message = &problems.items[0].message;
+    assert!(message.contains("many-to-one"), "got {message:?}");
+    assert!(message.contains("periods"), "got {message:?}");
+    // probe = left table, conjuncts oriented probe-side first, ops unflipped
+    assert_eq!(
+        *backend.overmatch_calls.borrow(),
+        vec!["events->periods: date>=start,date<=end".to_string()]
+    );
+}
+
+/// `one-to-many` reads left-to-right: the left side is the "one" side, so
+/// the *right* table's rows are probed for over-matching
+#[test]
+fn one_to_many_probes_the_right_side() {
+    let dir = temp_dir();
+    let yaml = write_yaml(
+        &dir,
+        indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: categories
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+              - name: trades
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: cat_id
+                    type: BIGINT
+            relationships:
+              - join: categories.id = trades.cat_id
+                cardinality: one-to-many
+        "#},
+    );
+    let categories_expected = vec![col("id", "BIGINT")];
+    let trades_expected = vec![col("id", "BIGINT"), col("cat_id", "BIGINT")];
+    let backend = FakeDuckdb::clean(
+        Instantiated {
+            tables: vec![categories_expected.clone(), trades_expected.clone()],
+            failures: Vec::new(),
+        },
+        Ok(vec![
+            TableSchema {
+                name: "categories".to_string(),
+                columns: categories_expected,
+            },
+            TableSchema {
+                name: "trades".to_string(),
+                columns: trades_expected,
+            },
+        ]),
+    );
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Ok, "got {:?}", problems.items);
+    // probe = right table; the equality conjunct reads probe-side first
+    assert_eq!(
+        *backend.overmatch_calls.borrow(),
+        vec!["trades->categories: cat_id=id".to_string()]
+    );
+}
+
+/// `one-to-one` checks both directions independently — two probes, flipped
+/// operators on the second — and a single violating direction yields exactly
+/// one problem naming the side that over-matches
+#[test]
+fn one_to_one_checks_both_directions() {
+    let dir = temp_dir();
+    let yaml = write_yaml(
+        &dir,
+        indoc! {r#"
+            $version: "0.2.0"
+            $learn_more: http://data-dict.tidyverse.org/
+            source:
+              duckdb:
+                file: warehouse.duckdb
+            tables:
+              - name: events
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: date
+                    type: DATE
+                    constraints: [unique]
+              - name: periods
+                columns:
+                  - name: id
+                    type: BIGINT
+                    constraints: [primary_key]
+                  - name: start
+                    type: DATE
+                    constraints: [unique]
+                  - name: end
+                    type: DATE
+            relationships:
+              - join: events.date >= periods.start AND events.date <= periods.end
+                cardinality: one-to-one
+        "#},
+    );
+    let events_expected = vec![col("id", "BIGINT"), col("date", "DATE")];
+    let mut backend = FakeDuckdb::clean(
+        Instantiated {
+            tables: vec![events_expected.clone(), range_periods_expected()],
+            failures: Vec::new(),
+        },
+        Ok(vec![
+            TableSchema {
+                name: "events".to_string(),
+                columns: events_expected,
+            },
+            TableSchema {
+                name: "periods".to_string(),
+                columns: range_periods_expected(),
+            },
+        ]),
+    );
+    backend
+        .overmatch_counts
+        .insert("periods->events".to_string(), 3);
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    // both directions probed; the second flips each operator so the backend
+    // still reads probe-side first (`p.start <= e.date` is `e.date >= p.start`)
+    assert_eq!(
+        *backend.overmatch_calls.borrow(),
+        vec![
+            "events->periods: date>=start,date<=end".to_string(),
+            "periods->events: start<=date,end>=date".to_string(),
+        ]
+    );
+    let d05s: Vec<_> = problems
+        .items
+        .iter()
+        .filter(|p| matches!(p.kind, ProblemKind::CardinalityViolation { .. }))
+        .collect();
+    assert_eq!(d05s.len(), 1, "got {:?}", problems.items);
+    assert!(
+        matches!(d05s[0].kind, ProblemKind::CardinalityViolation { count: 3 }),
+        "got {:?}",
+        d05s[0]
+    );
+    // the violating direction probes `periods`, so `events` over-matches
+    assert!(d05s[0].message.contains("events"), "got {:?}", d05s[0]);
+}
+
+/// a dictionary with no relationships never asks the cardinality question
+#[test]
+fn no_relationships_means_no_overmatch_queries() {
+    let dir = temp_dir();
+    let yaml = write_trades_dict(&dir);
+    let backend = FakeDuckdb::clean(instantiated(), trades_db());
+
+    validate_data(&yaml, None, &backend);
+    assert!(backend.overmatch_calls.borrow().is_empty());
+}
+
+/// a join table absent from the database already has its M06: the join
+/// can't be evaluated, so D05 is skipped rather than double-reported
+#[test]
+fn missing_join_table_skips_d05() {
+    let dir = temp_dir();
+    let yaml = write_range_dict(&dir);
+    let backend = FakeDuckdb::clean(
+        range_instantiated(),
+        Ok(vec![TableSchema {
+            name: "events".to_string(),
+            columns: range_events_expected(),
+        }]),
+    );
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert!(
+        problems
+            .items
+            .iter()
+            .any(|p| matches!(p.kind, ProblemKind::MissingTable)),
+        "got {:?}",
+        problems.items
+    );
+    assert!(backend.overmatch_calls.borrow().is_empty());
+}
+
+/// a join *column* absent from the database already has its M02: the join
+/// can't be evaluated, so D05 is skipped
+#[test]
+fn missing_join_column_skips_d05() {
+    let dir = temp_dir();
+    let yaml = write_range_dict(&dir);
+    let backend = FakeDuckdb::clean(
+        range_instantiated(),
+        Ok(vec![
+            TableSchema {
+                name: "events".to_string(),
+                columns: range_events_expected(),
+            },
+            TableSchema {
+                name: "periods".to_string(),
+                // no `end`
+                columns: vec![col("id", "BIGINT"), col("start", "DATE")],
+            },
+        ]),
+    );
+
+    let problems = validate_data(&yaml, None, &backend);
+    assert_eq!(problems.status(), Status::Error);
+    assert!(
+        problems
+            .items
+            .iter()
+            .any(|p| matches!(p.kind, ProblemKind::MissingInData)),
+        "got {:?}",
+        problems.items
+    );
+    assert!(backend.overmatch_calls.borrow().is_empty());
+}
+
+/// a failing D05 query is reported like any other lost check, not swallowed
+#[test]
+fn failing_overmatch_query_is_reported() {
+    let dir = temp_dir();
+    let yaml = write_range_dict(&dir);
+    let mut backend = FakeDuckdb::clean(range_instantiated(), range_db());
+    backend.overmatch_error = Some("query interrupted".to_string());
 
     let problems = validate_data(&yaml, None, &backend);
     assert_eq!(problems.status(), Status::Error);

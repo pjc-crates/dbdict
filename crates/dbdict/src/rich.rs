@@ -17,7 +17,8 @@ use std::path::Path;
 
 use quarto_source_map::SourceInfo;
 
-use crate::model::{DataDict, Scalar, Table};
+use crate::join_expr::JoinOp;
+use crate::model::{Cardinality, DataDict, Scalar, Table};
 use crate::problem::{ProblemKind, ProblemSet, Severity};
 use crate::validate_spec::{is_infinite, parse_date, parse_datetime, parse_naive_datetime};
 
@@ -63,6 +64,23 @@ pub enum InstantiateFailure {
     },
 }
 
+/// One join conjunct oriented for a D05 probe, in database name spellings.
+/// D05 asks "how many `probe_table` rows match more than one `other_table`
+/// row" — core resolves each checked direction to this shape (flipping the
+/// operator when the probe is the join's right side), so the backend always
+/// answers that one question. Conjuncts cross the seam as *data* (columns
+/// plus an operator), never as SQL text: rendering operators and quoting
+/// identifiers stay backend knowledge.
+#[derive(Debug, Clone)]
+pub struct OrientedConjunct {
+    /// column on the probed ("many") side, database spelling
+    pub probe_column: String,
+    /// comparison as read probe-side first: `probe.col <op> other.col`
+    pub op: JoinOp,
+    /// column on the counted ("one") side, database spelling
+    pub other_column: String,
+}
+
 /// How a canonical duckdb type behaves, as far as the descriptive-key checks
 /// care: which representation keys make sense on a column of this type.
 /// Assigned by the backend ([`DuckdbBackend::classify`]) — the type-spelling
@@ -94,7 +112,11 @@ pub enum TypeCategory {
 /// fourth (D04, the first *cross-table* query): methods each mapping 1:1 to
 /// a documented check is a cohesive seam, not a query catalogue — D04
 /// changes the SQL inside its method (an anti-join), not the seam's shape.
-/// Reconsider only if checks stop mapping cleanly to one query shape each.
+/// Revisited once more at the fifth (D05, the first check not describable
+/// as `(table, column)` pairs): the join's conjuncts cross the seam as data
+/// ([`OrientedConjunct`] — columns plus an operator enum), never as SQL
+/// text, so the boundary holds. Reconsider only if checks stop mapping
+/// cleanly to one query shape each.
 pub trait DuckdbBackend {
     /// Build the scratch database from the dictionary's typedefs and tables,
     /// and DESCRIBE what was created.
@@ -146,6 +168,19 @@ pub trait DuckdbBackend {
         fk_column: &str,
         pk_table: &str,
         pk_column: &str,
+    ) -> Result<usize, String>;
+
+    /// D05 — how many rows of `probe_table` match more than one row of
+    /// `other_table` under the ANDed `conjuncts`. Rows whose join columns
+    /// are NULL match nothing (SQL comparison semantics) and count zero.
+    /// A self-join passes the same table for both sides. `Err` is the
+    /// human-readable reason the query failed.
+    fn count_overmatched_rows(
+        &self,
+        db_file: &Path,
+        probe_table: &str,
+        other_table: &str,
+        conjuncts: &[OrientedConjunct],
     ) -> Result<usize, String>;
 }
 
@@ -310,14 +345,179 @@ pub(crate) fn check_data(
             out,
         );
     }
+    // D05 belongs to a *relationship*, not to one table, so it runs after
+    // the per-table loop rather than inside it
+    check_relationships_data(dict, &actual, &db_file, table, duckdb, out);
 }
 
-/// The `D##` checks for one table: D01 (nulls in required columns), D02
+/// The D05 check: every relationship's declared `cardinality`, verified by
+/// evaluating the join as declared and counting rows that match more than
+/// one row on a declared "one" side. Deliberately measured for *every* join
+/// type — for a pure equality join S06 + D02/D03 already imply this, but the
+/// relationship-span diagnostic names the declaration the data contradicts,
+/// and range joins (where overlapping ranges can over-match) get their only
+/// data-level coverage here (see site/validation.md).
+fn check_relationships_data(
+    dict: &DataDict,
+    actual: &[TableSchema],
+    db_file: &Path,
+    table_filter: Option<&str>,
+    duckdb: &dyn DuckdbBackend,
+    out: &mut ProblemSet,
+) {
+    for rel in &dict.relationships {
+        // a join that failed to parse has its S04; nothing to evaluate
+        let Some(join) = &rel.join else { continue };
+        let Some(first) = join.conjuncts.first() else {
+            continue;
+        };
+        // canonical orientation comes from the first conjunct, as S06 reads
+        // it; later conjuncts may be written either way round and are
+        // normalized against it below
+        let left_table = &first.lhs.table;
+        let right_table = &first.rhs.table;
+        // under --table, a relationship is in scope if it touches the
+        // selected table on either side
+        if !(table_selected(table_filter, left_table) || table_selected(table_filter, right_table))
+        {
+            continue;
+        }
+        // which direction(s) the declared cardinality bounds. probing a
+        // table counts its rows matching more than one row of the other
+        // side, so the probed side is the "many" side; one-to-one bounds
+        // both directions and each is checked (and reported) independently
+        let probe_left_directions: &[bool] = match rel.cardinality.value {
+            Cardinality::ManyToOne => &[true],
+            Cardinality::OneToMany => &[false],
+            Cardinality::OneToOne => &[true, false],
+        };
+        for &probe_left in probe_left_directions {
+            let (probe_name, other_name) = if probe_left {
+                (left_table, right_table)
+            } else {
+                (right_table, left_table)
+            };
+            // both tables must be reachable in the database: an absent one
+            // already has its M06 — skip rather than pile a failure on top
+            let Some(probe_db) = actual.iter().find(|a| names_eq(&a.name, probe_name)) else {
+                continue;
+            };
+            let Some(other_db) = actual.iter().find(|a| names_eq(&a.name, other_name)) else {
+                continue;
+            };
+            // orient every conjunct probe-side first, in db spellings. a
+            // missing column already has its M02 — skip the direction whole
+            let mut conjuncts = Vec::new();
+            let mut columns_present = true;
+            for conj in &join.conjuncts {
+                // canonicalize first: lhs on the join's left table. a
+                // conjunct written right-to-left is the same predicate with
+                // the operator mirrored (`a >= b` ⇔ `b <= a`). a self-join
+                // is always canonical — both sides name the same table, so
+                // orientation is positional
+                let (lhs, op, rhs) = if names_eq(&conj.lhs.table, left_table) {
+                    (&conj.lhs, conj.op, &conj.rhs)
+                } else {
+                    (&conj.rhs, flip_op(conj.op), &conj.lhs)
+                };
+                // then orient for the probe: probing the right side mirrors
+                // the operator again so it still reads probe-side first
+                let (probe_col, op, other_col) = if probe_left {
+                    (&lhs.column, op, &rhs.column)
+                } else {
+                    (&rhs.column, flip_op(op), &lhs.column)
+                };
+                let (Some(probe_db_col), Some(other_db_col)) = (
+                    db_column_in(probe_db, probe_col),
+                    db_column_in(other_db, other_col),
+                ) else {
+                    columns_present = false;
+                    break;
+                };
+                conjuncts.push(OrientedConjunct {
+                    probe_column: probe_db_col.to_string(),
+                    op,
+                    other_column: other_db_col.to_string(),
+                });
+            }
+            if !columns_present {
+                continue;
+            }
+            match duckdb.count_overmatched_rows(db_file, &probe_db.name, &other_db.name, &conjuncts)
+            {
+                Ok(0) => {}
+                Ok(count) => {
+                    let plural = if count == 1 { "" } else { "s" };
+                    out.push_located(
+                        ProblemKind::CardinalityViolation { count },
+                        Severity::Error,
+                        "A relationship's declared cardinality must hold in the data.",
+                        // name both sides (dictionary spellings) and the
+                        // declaration: a one-to-one can violate in either
+                        // direction, and the two problems must be tellable
+                        // apart
+                        format!(
+                            "has {count} `{probe_name}` row{plural} matching more than one \
+                             `{other_name}` row (declared `{}`)",
+                            cardinality_str(rel.cardinality.value)
+                        ),
+                        [rel.join_text.span.clone(), rel.cardinality.span.clone()],
+                    );
+                }
+                Err(reason) => {
+                    // a lost check, reported like M05 — located at the join
+                    // text, the relationship's own anchor
+                    out.push_located(
+                        ProblemKind::UnreadableSource,
+                        Severity::Error,
+                        "A dictionary's `source` must point at a queryable DuckDB database.",
+                        reason,
+                        [rel.join_text.span.clone()],
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// The database's own spelling of a dictionary column name within one table,
+/// if present (duckdb identifiers are case-insensitive).
+fn db_column_in<'a>(table: &'a TableSchema, dict_name: &str) -> Option<&'a str> {
+    table
+        .columns
+        .iter()
+        .map(|(db_name, _)| db_name.as_str())
+        .find(|db_name| names_eq(dict_name, db_name))
+}
+
+/// Mirror a comparison so its operands can swap sides: `a >= b` and
+/// `b <= a` are the same predicate. Equality is its own mirror.
+fn flip_op(op: JoinOp) -> JoinOp {
+    match op {
+        JoinOp::Eq => JoinOp::Eq,
+        JoinOp::Ge => JoinOp::Le,
+        JoinOp::Le => JoinOp::Ge,
+        JoinOp::Gt => JoinOp::Lt,
+        JoinOp::Lt => JoinOp::Gt,
+    }
+}
+
+/// The `cardinality` keyword as the dictionary spells it, for messages.
+fn cardinality_str(cardinality: Cardinality) -> &'static str {
+    match cardinality {
+        Cardinality::OneToOne => "one-to-one",
+        Cardinality::OneToMany => "one-to-many",
+        Cardinality::ManyToOne => "many-to-one",
+    }
+}
+
+/// The per-table `D##` checks: D01 (nulls in required columns), D02
 /// (duplicate primary-key values), D03 (duplicate values in `unique`
 /// columns), and D04 (orphaned values in `foreign_key` columns). D04 is the
 /// reason for the extra context: resolving a foreign key's targets needs the
 /// whole dictionary (`dict`), and querying them needs the pk-side tables'
-/// database spellings (`actual`).
+/// database spellings (`actual`). D05 (cardinality) is per-relationship,
+/// not per-table — see [`check_relationships_data`].
 fn check_table_data(
     dict: &crate::model::DataDict,
     dict_table: &Table,

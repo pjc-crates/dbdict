@@ -7,8 +7,9 @@
 
 use std::path::Path;
 
+use dbdict::join_expr::JoinOp;
 use dbdict::model::{DataDict, Table, Typedef};
-use dbdict::rich::{InstantiateFailure, Instantiated, TableSchema, TypeCategory};
+use dbdict::rich::{InstantiateFailure, Instantiated, OrientedConjunct, TableSchema, TypeCategory};
 use duckdb::{AccessMode, Config, Connection};
 
 /// Instantiate the dictionary in scratch in-memory databases and DESCRIBE
@@ -285,6 +286,16 @@ impl dbdict::rich::DuckdbBackend for NativeDuckdb {
     ) -> Result<usize, String> {
         count_orphaned_values(db_file, fk_table, fk_column, pk_table, pk_column)
     }
+
+    fn count_overmatched_rows(
+        &self,
+        db_file: &Path,
+        probe_table: &str,
+        other_table: &str,
+        conjuncts: &[OrientedConjunct],
+    ) -> Result<usize, String> {
+        count_overmatched_rows(db_file, probe_table, other_table, conjuncts)
+    }
 }
 
 /// Classify a canonical type spelling (as `DESCRIBE` returns it) for the
@@ -512,6 +523,57 @@ pub fn count_orphaned_values(
         quote_ident(pk_table),
     );
     query_count(&conn, &sql)
+}
+
+/// D05 — how many rows of `probe_table` match more than one row of
+/// `other_table` under the ANDed `conjuncts` (each already oriented
+/// probe-side first by the core). A correlated count is the most readable
+/// shape for "matches per row", and the `p`/`o` aliases keep a self-join
+/// unambiguous. NULL join columns satisfy no comparison, so such rows match
+/// zero rows — and zero matches are not a violation (see site/validation.md).
+pub fn count_overmatched_rows(
+    db_file: &Path,
+    probe_table: &str,
+    other_table: &str,
+    conjuncts: &[OrientedConjunct],
+) -> Result<usize, String> {
+    // the core never asks about an empty join, but an unguarded empty
+    // predicate would render invalid SQL — fail loudly instead
+    if conjuncts.is_empty() {
+        return Err("cardinality query needs at least one join conjunct".to_string());
+    }
+    let conn = open_read_only(db_file)?;
+    let predicate: Vec<String> = conjuncts
+        .iter()
+        .map(|c| {
+            format!(
+                "p.{} {} o.{}",
+                quote_ident(&c.probe_column),
+                op_sql(c.op),
+                quote_ident(&c.other_column)
+            )
+        })
+        .collect();
+    let sql = format!(
+        "SELECT count(*) FROM {} p \
+         WHERE (SELECT count(*) FROM {} o WHERE {}) > 1",
+        quote_ident(probe_table),
+        quote_ident(other_table),
+        predicate.join(" AND "),
+    );
+    query_count(&conn, &sql)
+}
+
+/// The SQL spelling of a join operator. The enum crosses the seam; the
+/// rendering stays here with the rest of the SQL knowledge.
+fn op_sql(op: JoinOp) -> &'static str {
+    match op {
+        JoinOp::Eq => "=",
+        JoinOp::Ge => ">=",
+        JoinOp::Le => "<=",
+        JoinOp::Gt => ">",
+        JoinOp::Lt => "<",
+    }
 }
 
 /// Run a `SELECT count(*)`-shaped query and return its single value.

@@ -12,7 +12,9 @@ use common::{temp_dir, write_yaml};
 use std::path::{Path, PathBuf};
 
 use dbdict::model::DataDict;
-use dbdict::rich::{DuckdbBackend, InstantiateFailure, Instantiated, TableSchema, TypeCategory};
+use dbdict::rich::{
+    DuckdbBackend, InstantiateFailure, Instantiated, OrientedConjunct, TableSchema, TypeCategory,
+};
 use dbdict::{Problem, ProblemKind, Status, validate_meta};
 use indoc::indoc;
 
@@ -89,6 +91,16 @@ impl DuckdbBackend for FakeDuckdb {
         _fk_column: &str,
         _pk_table: &str,
         _pk_column: &str,
+    ) -> Result<usize, String> {
+        unreachable!("validate_meta must not run data queries")
+    }
+
+    fn count_overmatched_rows(
+        &self,
+        _db_file: &Path,
+        _probe_table: &str,
+        _other_table: &str,
+        _conjuncts: &[OrientedConjunct],
     ) -> Result<usize, String> {
         unreachable!("validate_meta must not run data queries")
     }
@@ -678,6 +690,15 @@ fn database_path_resolves_relative_to_the_dictionary() {
         ) -> Result<usize, String> {
             unreachable!("validate_meta must not run data queries")
         }
+        fn count_overmatched_rows(
+            &self,
+            _db: &Path,
+            _probe_table: &str,
+            _other_table: &str,
+            _conjuncts: &[OrientedConjunct],
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
     }
     let backend = PathCheckingFake {
         expect: dir.join("warehouse.duckdb"),
@@ -750,6 +771,15 @@ fn absolute_database_path_is_used_verbatim() {
             _fk_col: &str,
             _pk_table: &str,
             _pk_col: &str,
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
+        fn count_overmatched_rows(
+            &self,
+            _db: &Path,
+            _probe_table: &str,
+            _other_table: &str,
+            _conjuncts: &[OrientedConjunct],
         ) -> Result<usize, String> {
             unreachable!("validate_meta must not run data queries")
         }

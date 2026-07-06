@@ -190,6 +190,12 @@ pub enum ProblemKind {
     /// Every declared fk→pk pairing is checked independently, so a column
     /// with two targets can carry two of these.
     OrphanedValues { count: usize },
+    /// `D05` (rich format) — the data violates a relationship's declared
+    /// `cardinality`: `count` rows match more than one row on a declared
+    /// "one" side when the join is evaluated (see `site/validation.md`).
+    /// `one-to-one` checks both directions independently, so one
+    /// relationship can carry two of these.
+    CardinalityViolation { count: usize },
 }
 
 impl ProblemKind {
@@ -211,6 +217,7 @@ impl ProblemKind {
             ProblemKind::DuplicateKey { .. } => "D02",
             ProblemKind::DuplicateValues { .. } => "D03",
             ProblemKind::OrphanedValues { .. } => "D04",
+            ProblemKind::CardinalityViolation { .. } => "D05",
             _ => return None,
         })
     }
@@ -232,7 +239,8 @@ impl ProblemKind {
             ProblemKind::NullsInRequired { .. }
             | ProblemKind::DuplicateKey { .. }
             | ProblemKind::DuplicateValues { .. }
-            | ProblemKind::OrphanedValues { .. } => Level::Data,
+            | ProblemKind::OrphanedValues { .. }
+            | ProblemKind::CardinalityViolation { .. } => Level::Data,
             _ => return None,
         })
     }

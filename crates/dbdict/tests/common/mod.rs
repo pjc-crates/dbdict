@@ -114,6 +114,16 @@ impl dbdict::rich::DuckdbBackend for NoDuckdb {
     ) -> Result<usize, String> {
         unreachable!("legacy validation must not query a duckdb database")
     }
+
+    fn count_overmatched_rows(
+        &self,
+        _db_file: &Path,
+        _probe_table: &str,
+        _other_table: &str,
+        _conjuncts: &[dbdict::rich::OrientedConjunct],
+    ) -> Result<usize, String> {
+        unreachable!("legacy validation must not query a duckdb database")
+    }
 }
 
 /// Write `yaml` to `<dir>/dict.yaml` and return the path.
