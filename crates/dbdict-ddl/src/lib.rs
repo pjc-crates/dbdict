@@ -92,6 +92,19 @@ impl std::error::Error for DdlError {}
 /// columns is skipped with a SQL comment saying so. Before returning, the
 /// whole script is executed against a fresh in-memory DuckDB, so an `Ok`
 /// script is proven runnable.
+///
+/// Column constraints (`primary_key`, `required`, `unique`) are deliberately
+/// **not** emitted as `PRIMARY KEY`/`NOT NULL`/`UNIQUE` clauses — decided
+/// 2026-07-06, don't revisit without new evidence. The generated schema's
+/// main use is bulk loading, and DuckDB's performance guide is blunt about
+/// constraints there: "For best bulk load performance, avoid primary key
+/// constraints" (their 554M-row microbenchmark loads ~4x slower with a
+/// primary key than without —
+/// <https://duckdb.org/docs/current/guides/performance/schema.html>).
+/// dbdict's model is declare-then-check: constraints live in the dictionary
+/// as declarations, and `validate-data` verifies the loaded data by query
+/// (D01 nulls in required/key columns, D02 duplicate primary keys) instead
+/// of the database enforcing them row by row during the load.
 pub fn generate(dict: &DataDict) -> Result<String, DdlError> {
     if dict.format == Format::Legacy {
         return Err(DdlError::LegacyUnsupported);

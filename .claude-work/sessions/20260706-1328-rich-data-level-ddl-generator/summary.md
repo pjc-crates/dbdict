@@ -55,10 +55,17 @@ Final state: 248 workspace tests green; clippy + rustfmt clean.
   SQL strings; revisit if the trait starts feeling like a query catalogue.
 - **S10 folds case for rich only** — folding matches DuckDB identifier
   semantics; legacy parquet names stay exact.
-- **Types-only DDL (v1):** constraints (`primary_key`/`required`/`unique`)
-  are not translated to SQL clauses — the round-trip yardstick is
-  `DESCRIBE`, which is types-only. Natural follow-up if generated schemas
-  should enforce what the dictionary declares.
+- **Types-only DDL (decided post-close, 2026-07-06):** constraints
+  (`primary_key`/`required`/`unique`) are deliberately never translated to
+  `PRIMARY KEY`/`NOT NULL`/`UNIQUE` clauses. DuckDB's performance guide
+  says "For best bulk load performance, avoid primary key constraints"
+  (their 554M-row microbenchmark loads ~4x slower with a PK), and generated
+  schemas exist mostly to be bulk-loaded. dbdict's model is
+  declare-then-check: `validate-data` verifies compliance by query (D01
+  nulls, D02 duplicate keys) after loading. The identified gap — `unique`
+  columns outside the primary key are unchecked — becomes a candidate D03
+  check, not a DDL feature. Reasoning recorded in the `generate` rustdoc,
+  README, and site/spec.md.
 
 ## insights captured
 

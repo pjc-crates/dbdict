@@ -85,7 +85,13 @@ Commands:
   runnable against a scratch in-memory DuckDB before it is printed. Untyped
   columns are omitted; table-scoped typedefs that shadow another typedef's
   name can't be spelled in one flat script, so `ddl` refuses with an error
-  naming them.
+  naming them. Constraints are deliberately not emitted as
+  `PRIMARY KEY`/`NOT NULL`/`UNIQUE` clauses: generated schemas exist mostly
+  to be bulk-loaded, and the
+  [DuckDB performance guide](https://duckdb.org/docs/current/guides/performance/schema.html)
+  advises "For best bulk load performance, avoid primary key constraints".
+  Instead, load the data and run `validate-data` — the dictionary's
+  constraints are checked by query, after the fact.
 * `types duckdb` / `types parquet` print the column types of a data source.
 * `skill read` / `skill write` print embedded agent skills for working with
   data dictionaries, and `spec` prints the full specification.

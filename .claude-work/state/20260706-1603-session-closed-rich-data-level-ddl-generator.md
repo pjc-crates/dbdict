@@ -37,12 +37,23 @@ Work session 20260706-1328-rich-data-level-ddl-generator: rich data level
   not duckdb types).
 - Untyped columns omitted; a table with no typed columns is skipped with a
   SQL comment in the script.
-- Types-only DDL v1: constraints (primary_key/required/unique) are NOT
-  emitted as PRIMARY KEY/NOT NULL/UNIQUE clauses — candidate follow-up.
+- Types-only DDL — decided, not deferred (2026-07-06): constraints
+  (primary_key/required/unique) are deliberately never emitted as
+  PRIMARY KEY/NOT NULL/UNIQUE clauses. DuckDB's performance guide:
+  "For best bulk load performance, avoid primary key constraints" (their
+  554M-row microbenchmark loads ~4x slower with a PK), and generated
+  schemas exist mostly to be bulk-loaded. dbdict's model: constraints are
+  declarations checked by `validate-data` queries after loading, not
+  enforced by the database during loads. Reasoning is in the `generate`
+  rustdoc (crates/dbdict-ddl/src/lib.rs), README, and site/spec.md — do
+  not revisit without new evidence.
 
 ## Next Steps
 Session closed; no in-flight work. Candidate future sessions:
-- constraint emission in DDL (PRIMARY KEY / NOT NULL / UNIQUE clauses)
+- D03 (new data check): duplicates in `unique` columns that are not
+  primary keys — D02 only covers the primary-key column set, so declared
+  `unique` constraints are currently unchecked. Same GROUP BY/HAVING
+  mechanics as D02; spec it in site/validation.md first, per convention.
 - other generators: dummy data, Python/Julia codegen (consume
   `load_and_lower` like dbdict-ddl)
 - fork branding ($learn_more URL, site/CNAME, site/index.md) — parked,

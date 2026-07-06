@@ -109,6 +109,16 @@ database-global, a table-scoped alias that shadows another alias's name
 cannot be spelled in one flat script; `ddl` refuses with an error naming the
 colliding typedefs rather than renaming them for you.
 
+The generated tables carry types only: column constraints (`primary_key`,
+`required`, `unique`) are deliberately not emitted as SQL clauses. A schema
+created from a dictionary exists mostly to be bulk-loaded, and the
+[DuckDB performance guide](https://duckdb.org/docs/current/guides/performance/schema.html)
+advises "For best bulk load performance, avoid primary key constraints".
+dbdict's model is declare-then-check: constraints stay in the dictionary as
+declarations, and `dbdict validate-data` verifies the loaded data by query
+(see [Validation](validation.md)) instead of the database enforcing them row
+by row during the load.
+
 ## Source
 
 `source` names the data the dictionary describes: one dictionary describes one
