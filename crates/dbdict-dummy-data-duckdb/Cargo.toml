@@ -18,3 +18,7 @@ dbdict-ddl.workspace = true
 duckdb.workspace = true
 # date/time arithmetic for DATE/TIMESTAMP value generation
 chrono.workspace = true
+
+[dev-dependencies]
+# yaml fixture strings for the end-to-end oracle tests
+indoc = "2"

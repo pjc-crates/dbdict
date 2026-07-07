@@ -221,21 +221,38 @@ generated database must pass it in tests.
       and every refusal path
 - **verify:** `cargo test -p dbdict-dummy-data`; clippy + fmt clean
 
-### phase 4: end-to-end generation + D01–D05 oracle (equality joins)
+### phase 4: end-to-end generation + D01–D05 oracle (equality joins) — DONE 2026-07-07T21:26:42+12:00
 
-- [ ] `dbdict-dummy-data-duckdb/src/lib.rs`:
-      `generate(dict, &opts) -> Result<Generated, ...>` — schema via
-      `dbdict_ddl::generate`, rows from plan + `nth` values, full script
-      = DDL + INSERTs; `Generated` carries the script and a
+- [x] `dbdict-dummy-data-duckdb/src/generate.rs` (new module, re-exported
+      from lib.rs): `generate(dict, &opts) -> Result<Generated,
+      GenerateError>` — schema via `dbdict_ddl::generate`, rows from plan
+      + `nth` values, full script = DDL + INSERTs; canonical column types
+      from `instantiate` (typedef aliases resolve to DESCRIBE spellings;
+      instantiate failures → named `Instantiate` error; untyped columns
+      skipped, matching the DDL); `Generated` carries the script and a
       `write_db(path)` step executing it on a writable
-      `Connection::open(path)` (declared extensions LOADed first)
-- [ ] integration tests: fixture dicts covering the rich-type surface
-      (structs, enums, decimals, arrays, nested) with all of
-      required/primary_key/unique/foreign_key + equality-join
-      relationships; generate → run `dbdict::validate_data` with
-      `NativeDuckdb` as the oracle → status passes, zero problems
-- [ ] determinism test: same seed → byte-identical script; different
-      seed → different plain values
+      `Connection::open(path)` (declared extensions LOADed first, S19
+      charset re-checked; refuses an existing path — overwrite is the
+      CLI's `--force` decision)
+- also: value resolution conventions — injective FK draws use identity
+  (`k = i`) so `stored_value` resolves chains of unique FK columns
+  without reading the database; deterministic randomness (plain-fill
+  indices, non-injective FK draws, NULL placement) via an inline
+  FNV-1a + splitmix64 `mix(seed, salt, i)` — no `rand` dependency;
+  `null_fraction >= 1.0` decided exactly (float compare can miss
+  top-end hashes)
+- [x] integration tests (`tests/generate.rs`, 7 tests): rich-surface
+      fixture (decimal/enum/struct typedefs, `VARCHAR[]`, `FLOAT[3]`,
+      MAP, TIMESTAMP, JSON under a declared `duckdb: extensions:`) with
+      all four constraints + many-to-one, and a one-to-one unique-FK
+      fixture; generate → `write_db` → `dbdict::validate_data` with
+      `NativeDuckdb` as the oracle → `Status::Ok`, zero problems; plus
+      write_db-refuses-existing (file untouched), unique-ENUM capacity
+      refusal, INET refused at instantiation, null_fraction 1.0/0.0
+      exactness
+- [x] determinism test: same seed → byte-identical script; different
+      seed → different script (seed feeds NULL placement too, so
+      whole-script inequality is the honest observable)
 - **verify:** `cargo test --workspace` green; oracle tests prove
   D01–D04 + equality D05 by construction
 

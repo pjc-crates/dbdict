@@ -6,8 +6,10 @@
 //! monotone for orderable ones, so uniqueness and range-join construction
 //! reduce to index arithmetic upstream in `dbdict-dummy-data`.
 
+pub mod generate;
 pub mod types;
 pub mod values;
 
+pub use generate::{GenerateError, Generated, generate};
 pub use types::{DuckType, parse_type};
 pub use values::{ValueError, capacity, is_orderable, nth};

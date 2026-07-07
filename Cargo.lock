@@ -699,6 +699,7 @@ dependencies = [
  "dbdict-duckdb",
  "dbdict-dummy-data",
  "duckdb",
+ "indoc",
 ]
 
 [[package]]
