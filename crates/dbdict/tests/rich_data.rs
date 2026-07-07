@@ -177,7 +177,7 @@ fn write_trades_dict(dir: &Path) -> PathBuf {
         dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -303,7 +303,7 @@ fn composite_primary_key_is_one_key() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -356,7 +356,7 @@ fn no_primary_key_no_duplicate_query() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -393,7 +393,7 @@ fn write_accounts_dict(dir: &Path) -> PathBuf {
         dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -472,7 +472,7 @@ fn sole_primary_key_column_is_not_double_checked() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -511,7 +511,7 @@ fn composite_key_member_with_unique_is_checked() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -742,7 +742,7 @@ fn write_fk_dict(dir: &Path) -> PathBuf {
         dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -852,7 +852,7 @@ fn every_declared_fk_pk_pair_is_checked() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -954,7 +954,7 @@ fn range_conjunct_does_not_pair_for_d04() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -999,7 +999,7 @@ fn self_join_fk_queries_the_same_table() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -1176,7 +1176,7 @@ fn write_range_dict(dir: &Path) -> PathBuf {
         dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -1279,7 +1279,7 @@ fn one_to_many_probes_the_right_side() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -1339,7 +1339,7 @@ fn one_to_one_checks_both_directions() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: http://data-dict.tidyverse.org/
+            $learn_more: https://github.com/pjc-wspace/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb

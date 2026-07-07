@@ -136,7 +136,7 @@ pub fn write_yaml(dir: &Path, yaml: &str) -> PathBuf {
 /// The boilerplate top-level header — the required `$version` and recommended
 /// `$learn_more` — that nearly every dictionary needs. Exactly two lines, so a
 /// `body` written beneath it starts at line 3.
-pub const HEADER: &str = "$version: \"0.1.0\"\n$learn_more: http://data-dict.tidyverse.org/\n";
+pub const HEADER: &str = "$version: \"0.1.0\"\n$learn_more: https://github.com/pjc-wspace/dbdict\n";
 
 /// Write `body` to `<dir>/dict.yaml` with [`HEADER`] prepended, returning the
 /// path, so a test shows only the part under test. Use [`write_yaml`] for the

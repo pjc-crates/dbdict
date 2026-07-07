@@ -1,8 +1,9 @@
 ---
 source: crates/dbdict/tests/validate_meta.rs
+assertion_line: 304
 ---
 $version: "0.1.0"
-$learn_more: http://data-dict.tidyverse.org/
+$learn_more: https://github.com/pjc-wspace/dbdict
 tables:
   - name: animals
     source:

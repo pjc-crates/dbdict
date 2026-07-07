@@ -25,8 +25,10 @@ use crate::model::{Cardinality, Column, DataDict, Format, Scalar, Spanned, Table
 use crate::problem::{Problem, ProblemKind, ProblemSet, Suggestion, subspan};
 use crate::{SourceContext, lower};
 
-/// The canonical documentation URL suggested for `$learn_more`.
-pub const LEARN_MORE_URL: &str = "http://data-dict.tidyverse.org/";
+/// The canonical documentation URL suggested for `$learn_more` — this fork's
+/// repository (upstream used its published site; dbdict has no published site
+/// yet, and the repo URL stays valid either way)
+pub const LEARN_MORE_URL: &str = "https://github.com/pjc-wspace/dbdict";
 
 // each spec version has its own embedded schema; `load` picks one by peeking
 // at the document's `$version` (see `select_schema`)

@@ -1,5 +1,6 @@
 ---
 source: crates/dbdict-cli/tests/cli.rs
+assertion_line: 40
 expression: "sanitize(&stderr, &fixture.display().to_string())"
 ---
 warning: [S09] A document should point readers to the spec with `$learn_more`.
@@ -10,7 +11,7 @@ warning: [S09] A document should point readers to the spec with `$learn_more`.
   |
 help: point readers to the spec
   |
-2 + $learn_more: http://data-dict.tidyverse.org/
+2 + $learn_more: https://github.com/pjc-wspace/dbdict
   |
 error: [S07] A `number(id)` column must describe its data with `examples`.
  --> <fixture>:9:15
