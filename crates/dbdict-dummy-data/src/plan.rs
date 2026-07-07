@@ -96,9 +96,11 @@ pub struct Plan {
 }
 
 /// Build the generation plan for a dictionary, or refuse with a
-/// descriptive error naming what to change. Refusals are always
-/// plan-time: once a plan exists, rendering it cannot fail for
-/// constraint reasons.
+/// descriptive error naming what to change. Every refusal this crate can
+/// see happens here. The one constraint it cannot see is type capacity —
+/// the plan is backend-generic and never parses type strings — so "unique
+/// column with fewer distinct values than rows" is refused by the backend
+/// generator up front, before it renders anything.
 pub fn plan(dict: &DataDict, opts: &GenerateOptions) -> Result<Plan, DummyDataError> {
     if dict.format == Format::Legacy {
         return Err(DummyDataError::LegacyUnsupported);

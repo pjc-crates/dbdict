@@ -44,6 +44,15 @@ pub enum GenerateError {
         column: String,
         error: ValueError,
     },
+    /// a unique column's type cannot produce enough distinct values for the
+    /// requested rows — refused before any rendering. the plan cannot make
+    /// this refusal itself: it is backend-generic and never parses types
+    UniqueCapacityTooSmall {
+        table: String,
+        column: String,
+        capacity: u64,
+        rows: u64,
+    },
     /// `write_db` refuses to touch a path that already exists — the caller
     /// decides about overwriting, never this crate
     OutputExists { path: PathBuf },
@@ -68,6 +77,17 @@ impl fmt::Display for GenerateError {
                 column,
                 error,
             } => write!(f, "table \"{table}\" column \"{column}\": {error}"),
+            GenerateError::UniqueCapacityTooSmall {
+                table,
+                column,
+                capacity,
+                rows,
+            } => write!(
+                f,
+                "table \"{table}\" column \"{column}\": {rows} row(s) requested but the \
+                 unique column's type can only produce {capacity} distinct value(s) — \
+                 lower the row count or widen the type"
+            ),
             GenerateError::OutputExists { path } => write!(
                 f,
                 "output file {} already exists — refusing to overwrite",
@@ -171,6 +191,34 @@ pub fn generate(dict: &DataDict, opts: &GenerateOptions) -> Result<Generated, Ge
             .map(|(name, canonical)| (name.as_str(), parse_type(canonical)))
             .collect();
         types.insert(table.name.value.as_str(), parsed);
+    }
+
+    // capacity refusal up front: a unique column whose type cannot produce
+    // one distinct value per row would exhaust mid-render — refuse before
+    // rendering anything instead, mirroring the plan's own refusal style.
+    // (fk draws need no check here: an injective draw's indices are bounded
+    // by the target's rows, which the plan's pigeonhole check already
+    // limits, and the target's own unique column is checked in this loop)
+    for table_plan in &plan.tables {
+        let table_types = &types[table_plan.table.as_str()];
+        for column_plan in &table_plan.columns {
+            if !matches!(column_plan.role, Role::IndexedUnique) {
+                continue;
+            }
+            // untyped columns are skipped by the DDL and the INSERTs alike
+            let Some(ty) = table_types.get(column_plan.column.as_str()) else {
+                continue;
+            };
+            let cap = capacity(ty);
+            if cap < table_plan.rows {
+                return Err(GenerateError::UniqueCapacityTooSmall {
+                    table: table_plan.table.clone(),
+                    column: column_plan.column.clone(),
+                    capacity: cap,
+                    rows: table_plan.rows,
+                });
+            }
+        }
     }
 
     let mut script = dbdict_ddl::generate(dict)?;

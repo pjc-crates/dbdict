@@ -12,7 +12,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use dbdict::{Status, validate_data};
 use dbdict_duckdb::NativeDuckdb;
 use dbdict_dummy_data::GenerateOptions;
-use dbdict_dummy_data_duckdb::values::ValueError;
 use dbdict_dummy_data_duckdb::{GenerateError, generate};
 use indoc::indoc;
 
@@ -308,15 +307,17 @@ fn unique_enum_with_more_rows_than_variants_is_refused() {
     "#});
     let dict = load(&dict_path);
 
-    // 10 rows (the default), only 2 distinct enum values
+    // 10 rows (the default), only 2 distinct enum values — refused up
+    // front, before any rendering, not via a mid-render exhaustion
     let err = generate(&dict, &GenerateOptions::default()).unwrap_err();
     assert!(
         matches!(
             err,
-            GenerateError::Value {
+            GenerateError::UniqueCapacityTooSmall {
                 ref table,
                 ref column,
-                error: ValueError::Exhausted { capacity: 2, .. },
+                capacity: 2,
+                rows: 10,
             } if table == "t" && column == "flag"
         ),
         "got: {err:?}"

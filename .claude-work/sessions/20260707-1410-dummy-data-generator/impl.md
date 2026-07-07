@@ -256,6 +256,33 @@ generated database must pass it in tests.
 - **verify:** `cargo test --workspace` green; oracle tests prove
   D01–D04 + equality D05 by construction
 
+### interphase: code-review catch-up + capacity fixes — DONE 2026-07-08T09:54:11+12:00
+
+> unplanned phase, inserted on user direction after resuming. a high-effort
+> multi-agent review of `05941b0..HEAD` (everything since the last review,
+> 2026-07-06: 23 commits, ~10.9k lines) reported 10 verified findings —
+> full record incl. below-cap items and refutations in
+> `.claude-work/notes/20260708-0705-code-review-findings-05941b0-head.md`.
+> user mandate recorded: run `/code-review` at every phase boundary from
+> now on ("even with solid TDD, independent code reviews are invaluable").
+
+- [x] findings 1–5 fixed TDD-style (RED observed for every fix):
+      values.rs capacities — BigInt `1<<63` (split from HugeInt), Interval
+      `1<<31` (literal-syntax bound, engine-pinned), Union =
+      capacity(alternatives[0]) (all `nth` ever varies), Varchar pad
+      `{i:020}` (monotone across the full u64 index range)
+- [x] new `GenerateError::UniqueCapacityTooSmall` + upfront capacity loop
+      in generate.rs — unique columns refused before rendering; plan.rs
+      doc re-stated honestly (plan is backend-generic, cannot see type
+      capacities); unique-ENUM test now asserts the pre-render refusal
+- [x] 4 new engine-judged tests in tests/values.rs (each corrected
+      capacity exercised at `cap - 1`)
+- findings 6–10 + verified-but-cut items deferred: finding 9 (shared D05
+  orientation helper) folds into phase 5's design; the rest queued per the
+  note's session-shape section
+- **verify:** PASSED 2026-07-08 — `cargo test --workspace` exit 0, clippy
+  0 warnings, `cargo fmt --check` clean
+
 ### phase 5: D05 range joins + one-to-one
 
 - [ ] slot-based generation for range conjuncts: "one"-side row `k` gets

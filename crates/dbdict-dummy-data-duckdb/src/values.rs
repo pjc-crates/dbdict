@@ -57,7 +57,9 @@ pub fn capacity(ty: &DuckType) -> u64 {
         DuckType::TinyInt => 128,
         DuckType::SmallInt => 1 << 15,
         DuckType::Integer => 1 << 31,
-        DuckType::BigInt | DuckType::HugeInt => u64::MAX,
+        DuckType::BigInt => 1 << 63,
+        // hugeint is 128-bit, so every u64 index fits its non-negative half
+        DuckType::HugeInt => u64::MAX,
         DuckType::UTinyInt => 256,
         DuckType::USmallInt => 1 << 16,
         DuckType::UInteger => 1 << 32,
@@ -78,14 +80,20 @@ pub fn capacity(ty: &DuckType) -> u64 {
         DuckType::Time => 86_400,
         // one value per second from 2000-01-01 to well past year 9999
         DuckType::Timestamp | DuckType::TimestampTz => 250_000_000_000,
-        DuckType::Interval => u64::MAX,
+        // the engine rejects `INTERVAL {i} SECONDS` beyond 32 signed bits —
+        // the literal syntax binds, pinned by the interval capacity test
+        DuckType::Interval => 1 << 31,
         // the 48 bits we format into the last uuid group
         DuckType::Uuid => 1 << 48,
         DuckType::Geometry => u64::MAX,
         DuckType::Enum(values) => values.len() as u64,
         DuckType::List(inner) | DuckType::Array(inner, _) => capacity(inner),
-        DuckType::Struct(fields) | DuckType::Union(fields) => {
-            fields.iter().map(|(_, t)| capacity(t)).min().unwrap_or(0)
+        DuckType::Struct(fields) => fields.iter().map(|(_, t)| capacity(t)).min().unwrap_or(0),
+        // nth varies only the first alternative's payload, so capacity
+        // follows that alternative alone — a narrow later one (say BOOLEAN)
+        // must not shrink it
+        DuckType::Union(alternatives) => {
+            alternatives.first().map(|(_, t)| capacity(t)).unwrap_or(0)
         }
         DuckType::Map(key, value) => capacity(key).min(capacity(value)),
         DuckType::Unsupported(_) => 0,
@@ -158,8 +166,9 @@ pub fn nth(ty: &DuckType, i: u64) -> Result<String, ValueError> {
         // whole units: the scale digits stay zero, so the integer literal
         // casts exactly
         DuckType::Decimal { .. } => i.to_string(),
-        // zero-padded so string order agrees with numeric order (monotone)
-        DuckType::Varchar => format!("'v{i:019}'"),
+        // zero-padded so string order agrees with numeric order (monotone);
+        // 20 digits covers every u64 index
+        DuckType::Varchar => format!("'v{i:020}'"),
         // 8 bytes, big-endian, each as a `\xHH` escape
         DuckType::Blob => {
             let mut out = String::from("'");
