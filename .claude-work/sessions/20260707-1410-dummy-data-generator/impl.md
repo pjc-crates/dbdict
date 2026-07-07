@@ -150,36 +150,39 @@ generated database must pass it in tests.
   declaring `json` validates cleanly, one declaring a bogus extension
   fails with the named error
 
-### phase 2: generator scaffolding + typed value generation
+### phase 2: generator scaffolding + typed value generation — DONE 2026-07-07T18:32:43+12:00
 
-- [ ] add `crates/dbdict-dummy-data` and `crates/dbdict-dummy-data-duckdb`
+- [x] add `crates/dbdict-dummy-data` and `crates/dbdict-dummy-data-duckdb`
       to root `Cargo.toml` members + `[workspace.dependencies]`; create
-      both crates (`dbdict-dummy-data` as a stub with error type)
-- [ ] `dbdict-dummy-data-duckdb/src/types.rs`: small paren-aware parser
-      for canonical type strings → `DuckType` — full built-in surface per
-      the coverage list in the design overview (scalars incl. unsigned/
-      HUGEINT/BIT/BLOB/INTERVAL/UUID, `DECIMAL(p,s)`, `ENUM(...)`,
-      `STRUCT(...)`, `MAP(...)`, `UNION(...)`, `T[]` lists, `T[N]`
-      arrays — recursive) + explicit `Unsupported(raw)` fallback
-- [ ] `dbdict-dummy-data-duckdb/src/values.rs`: `nth(i)` literal
-      generation per `DuckType` — injective always, monotone for
-      orderable scalars (ints, floats, decimals, VARCHAR, DATE, TIME,
-      TIMESTAMP/TZ, INTERVAL), capacity reporting for BOOLEAN/ENUM;
-      recursive for nested containers; `Unsupported` → descriptive
-      error; seed folded in for plain (non-key) variation
-- [ ] extension-type probe: one test each for `JSON`,
-      `GEOMETRY`/`GEOMETRY('EPSG:2193')`, `INET` — declared via the
-      phase 1 section, do they instantiate on the bundled engine? wire
-      the outcome: generates (injective literals; JSON = valid-JSON
-      strings, literal syntax for GEOMETRY/INET settled empirically
-      here) or stays `Unsupported`; record the result in a comment +
-      this file
-- [ ] unit tests: for each supported type, CREATE a scratch table with
-      that column type, INSERT a run of generated literals, assert row
-      count + no cast errors; assert monotonicity/injectivity where
-      claimed; include an explicitly nested fixture
-      (struct-in-struct with list members) to prove the recursion at the
-      value level
+      both crates (`dbdict-dummy-data` as a stub with `DummyDataError`)
+- [x] `dbdict-dummy-data-duckdb/src/types.rs`: paren/quote-aware parser
+      for canonical type strings → `DuckType` — full built-in surface
+      (scalars incl. unsigned/HUGEINT/BIT/BLOB/INTERVAL/UUID,
+      `DECIMAL(w,s)`, `ENUM(...)`, `STRUCT(...)`, `MAP(...)`,
+      `UNION(...)`, `T[]`, `T[N]` — recursive) + `Unsupported(raw)`
+      fallback; canonical spellings pinned by a throwaway DESCRIBE probe
+      (`TIMESTAMPTZ` → `TIMESTAMP WITH TIME ZONE`, enum commas get a
+      space, quoted field names appear only when needed)
+- [x] `dbdict-dummy-data-duckdb/src/values.rs`: `nth(ty, i)` literal
+      generation — injective always, monotone for orderable scalars
+      (ints, floats, decimals, VARCHAR, DATE, TIME, TIMESTAMP/TZ,
+      INTERVAL), `capacity()` per type (nested = min of parts, since one
+      index drives every part), `Unsupported` → descriptive error
+- also (deviation): seed is NOT folded into `nth` — randomness for plain
+  columns is carried by caller-chosen *indices* in later phases, keeping
+  `nth` pure so the injectivity/monotonicity proofs hold unconditionally
+- [x] extension-type probe outcomes (empirical, bundled 1.5.4):
+      `JSON` generates (statically linked, autoloads even hardened);
+      plain `GEOMETRY` generates — it is a true built-in in 1.5, WKT cast
+      works with no extension; `GEOMETRY('EPSG:…')` → `Unsupported`
+      (needs spatial's CRS registry, not statically linkable);
+      `INET` → `Unsupported` (no crate feature; the default-config probe
+      passing was a false positive from ~/.duckdb/extensions autoload,
+      which the hardened config refuses)
+- [x] tests: 17 engine round-trips (`tests/values.rs`) — INSERT runs per
+      type, engine-judged distinctness + zero order inversions where
+      monotone claimed, deeply nested struct fixture, capacity/exhausted/
+      unsupported error paths; 7 pure parser unit tests in `types.rs`
 - **verify:** `cargo test -p dbdict-dummy-data-duckdb`,
   `cargo clippy --workspace`, `cargo fmt --check`; workspace still builds
 

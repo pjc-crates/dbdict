@@ -1,0 +1,20 @@
+# the duckdb-specific half of the dummy-data generator: maps canonical
+# duckdb column types (1:1) to deterministic value generators, renders rows
+# as SQL INSERT literals, and writes the generated database. consumes the
+# plan from dbdict-dummy-data; never touches YAML or the CLI.
+[package]
+name = "dbdict-dummy-data-duckdb"
+description = "DuckDB value generation and database writing for dbdict dummy data"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+dbdict.workspace = true
+dbdict-dummy-data.workspace = true
+dbdict-duckdb.workspace = true
+dbdict-ddl.workspace = true
+duckdb.workspace = true
+# date/time arithmetic for DATE/TIMESTAMP value generation
+chrono.workspace = true

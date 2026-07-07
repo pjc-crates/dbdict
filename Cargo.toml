@@ -5,6 +5,8 @@ members = [
     "crates/dbdict-cli",
     "crates/dbdict-ddl",
     "crates/dbdict-duckdb",
+    "crates/dbdict-dummy-data",
+    "crates/dbdict-dummy-data-duckdb",
     "crates/dbdict-parquet",
 ]
 
@@ -24,6 +26,8 @@ annotate-snippets = "0.12"
 parquet = { version = "54", default-features = false }
 dbdict-parquet = { path = "crates/dbdict-parquet", version = "0.0.1" }
 dbdict-duckdb = { path = "crates/dbdict-duckdb", version = "0.0.1" }
+dbdict-dummy-data = { path = "crates/dbdict-dummy-data", version = "0.0.1" }
+dbdict-dummy-data-duckdb = { path = "crates/dbdict-dummy-data-duckdb", version = "0.0.1" }
 dbdict-ddl = { path = "crates/dbdict-ddl", version = "0.0.1" }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }

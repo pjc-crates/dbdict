@@ -682,6 +682,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "dbdict-dummy-data"
+version = "0.0.1"
+dependencies = [
+ "dbdict",
+]
+
+[[package]]
+name = "dbdict-dummy-data-duckdb"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "dbdict",
+ "dbdict-ddl",
+ "dbdict-duckdb",
+ "dbdict-dummy-data",
+ "duckdb",
+]
+
+[[package]]
 name = "dbdict-parquet"
 version = "0.0.1"
 dependencies = [

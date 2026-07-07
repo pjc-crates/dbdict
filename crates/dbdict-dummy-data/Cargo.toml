@@ -1,0 +1,14 @@
+# the backend-generic half of the dummy-data generator: turns the lowered
+# model into a generation plan (table order, row counts, per-column value
+# roles). knows nothing about concrete duckdb types — that lives in
+# dbdict-dummy-data-duckdb. never touches YAML or the CLI.
+[package]
+name = "dbdict-dummy-data"
+description = "Backend-generic dummy-data generation plan for dbdict.yaml dictionaries"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+dbdict.workspace = true
