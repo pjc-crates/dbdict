@@ -28,4 +28,8 @@ dbdict-ddl = { path = "crates/dbdict-ddl", version = "0.0.1" }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-duckdb = { version = "~1.10504.0", features = ["bundled"] }
+# `json` statically links the json extension into the bundled engine: the
+# hardened scratch config (`enable_external_access(false)`) blocks LOADing
+# external extension binaries, so an extension is only available to
+# validation when it is compiled in
+duckdb = { version = "~1.10504.0", features = ["bundled", "json"] }

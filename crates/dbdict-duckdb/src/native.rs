@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use dbdict::join_expr::JoinOp;
-use dbdict::model::{DataDict, Table, Typedef};
+use dbdict::model::{DataDict, Spanned, Table, Typedef};
 use dbdict::rich::{InstantiateFailure, Instantiated, OrientedConjunct, TableSchema, TypeCategory};
 use duckdb::{AccessMode, Config, Connection};
 
@@ -32,6 +32,7 @@ pub fn instantiate(dict: &DataDict) -> Instantiated {
     // stage 1: the global typedefs alone, so a broken global reports once
     // (not once per table) and at its own span
     let global_conn = open_scratch();
+    load_declared_extensions(&global_conn, &dict.extensions);
     let global_refs: Vec<&Typedef> = dict.typedefs.iter().collect();
     for (index, error) in create_types_fixpoint(&global_conn, &global_refs).stalled {
         failures.push(InstantiateFailure::Typedef {
@@ -47,6 +48,7 @@ pub fn instantiate(dict: &DataDict) -> Instantiated {
             table_index,
             table,
             &dict.typedefs,
+            &dict.extensions,
             &mut failures,
         ));
     }
@@ -61,9 +63,11 @@ fn instantiate_table(
     table_index: usize,
     table: &Table,
     globals: &[Typedef],
+    extensions: &[Spanned<String>],
     failures: &mut Vec<InstantiateFailure>,
 ) -> Vec<(String, String)> {
     let conn = open_scratch();
+    load_declared_extensions(&conn, extensions);
 
     // a global's failures were already reported by stage 1 (a global can also
     // fail *here* when it compounds on a broken scoped typedef; the scoped
@@ -246,6 +250,10 @@ impl dbdict::rich::DuckdbBackend for NativeDuckdb {
         instantiate(dict)
     }
 
+    fn load_extensions(&self, extensions: &[String]) -> Vec<Result<(), String>> {
+        load_extensions(extensions)
+    }
+
     fn read_schema(&self, db_file: &Path) -> Result<Vec<TableSchema>, String> {
         read_schema(db_file)
     }
@@ -335,6 +343,52 @@ fn open_scratch() -> Connection {
         .expect("static config value always applies");
     Connection::open_in_memory_with_flags(config)
         .expect("failed to create the in-memory scratch database")
+}
+
+/// A name safe to interpolate into a `LOAD` statement: non-empty lowercase
+/// ASCII letters, digits, underscores. The same rule S19 enforces at the
+/// spec level — repeated here because these are pub fns callable with a
+/// dictionary that never went through spec validation, and the dictionary
+/// is untrusted input (see [`open_scratch`]).
+fn safe_extension_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+/// M10 — try to LOAD each named extension into a fresh scratch connection
+/// (the same configuration [`instantiate`] uses), one result per name in
+/// input order. `Err` is duckdb's own message, or a naming complaint for a
+/// name that is not safe to interpolate.
+pub fn load_extensions(extensions: &[String]) -> Vec<Result<(), String>> {
+    let conn = open_scratch();
+    extensions
+        .iter()
+        .map(|name| {
+            if !safe_extension_name(name) {
+                return Err(format!("`{name}` is not a valid extension name"));
+            }
+            match conn.execute(&format!("LOAD {name}"), []) {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
+        })
+        .collect()
+}
+
+/// LOAD the dictionary's declared extensions into `conn`, skipping unsafe
+/// names and ignoring failures: an unloadable extension is M10's report
+/// (see [`load_extensions`]), and the column types that needed it will fail
+/// their own probes — a truthful M09 with duckdb's reason.
+fn load_declared_extensions(conn: &Connection, extensions: &[Spanned<String>]) {
+    for ext in extensions {
+        let name = &ext.value;
+        if !safe_extension_name(name) {
+            continue;
+        }
+        let _ = conn.execute(&format!("LOAD {name}"), []);
+    }
 }
 
 /// What the `CREATE TYPE` fixpoint produced: which typedefs were created (in

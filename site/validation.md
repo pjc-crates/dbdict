@@ -48,6 +48,8 @@ When validating the spec, each problem with the dictionary is one of:
 * **Misplaced single-table description** (S16, warning): a dictionary with exactly one table carries `description` or `details` on that table; for a single-table dictionary these belong at the top level.
 * **Malformed version** (S17, error): the top-level `version` does not give exactly one of `number`, `date`, or `hash`; its `number` is not three dot-separated numeric components (`MAJOR.MINOR.PATCH`) with an optional pre-release/build suffix; or its `date` is not a valid ISO 8601 date (`YYYY-MM-DD`).
 * **Non-string typedef name** (S18, error, rich format only): a `typedef:` key is not a string (an unquoted `123:` or `true:` parses as a number or boolean). The schema constrains typedef *values* only, so without this check the alias would silently vanish from the dictionary.
+* **Invalid extension name** (S19, error, rich format only): a `duckdb: extensions:` entry is empty or not made of lowercase ASCII letters, digits, and underscores. The shape is dbdict's own conservative rule: it covers real extension names (`json`, `spatial`, `inet`) and keeps the name safe to place in a `LOAD` statement — a dictionary is untrusted input.
+* **Duplicate extension** (S20, warning, rich format only): the same extension is declared more than once. Harmless to the engine (`LOAD` is idempotent) but almost certainly an editing slip.
 
 (An `enum`'s `values` are constrained structurally by the schema rather than by an `S` check: each value must be a scalar, and in the map form each label must be a string. The `version` map's allowed keys and their value types are likewise structural; S17 covers only the semantics the schema can't express.)
 
@@ -74,6 +76,7 @@ When validating the data's metadata against the dictionary, each column mismatch
 * **Undocumented table** (M07, warning, rich format only): a table (or view) present in the database that the dictionary does not describe. A warning for the same reason as M03. Skipped when validating a single named table.
 * **Rejected typedef** (M08, error, rich format only): DuckDB rejected a `typedef:` when the dictionary was instantiated in the scratch database — an unknown or cyclic reference, or a malformed type expression. Cycles surface here naturally: typedefs are created with retry-until-stall, so the stalled leftovers are exactly the cyclic or dangling group, each reported with DuckDB's own error at its definition.
 * **Rejected column type** (M09, error, rich format only): DuckDB rejected a column's `type:` expression. The column has no canonical form, so it is skipped by the M01 comparison; the rest of its table is still checked.
+* **Unloadable extension** (M10, error, rich format only): a declared `duckdb: extensions:` entry does not `LOAD` on this engine; DuckDB's own error is the message. It reports before the instantiation checks because a missing extension is the root cause of the type failures that follow (a `JSON` column cannot canonicalize without the `json` extension). Validation runs with external access disabled and never `INSTALL`s, so an extension loads only when it is compiled into dbdict's bundled engine (`json` is; see [Spec](spec.md)).
 
 ## Data-validation checks
 

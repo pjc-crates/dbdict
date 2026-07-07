@@ -122,6 +122,16 @@ pub trait DuckdbBackend {
     /// and DESCRIBE what was created.
     fn instantiate(&self, dict: &DataDict) -> Instantiated;
 
+    /// M10 — try to LOAD each named extension into a fresh scratch
+    /// connection (the same configuration [`Self::instantiate`] uses), one
+    /// result per name in input order. `Err` is duckdb's human-readable
+    /// reason the extension did not load. Defaulted to "everything loads"
+    /// so test fakes only override it when they exercise M10; the real
+    /// backend must override.
+    fn load_extensions(&self, extensions: &[String]) -> Vec<Result<(), String>> {
+        extensions.iter().map(|_| Ok(())).collect()
+    }
+
     /// Read the real database's schema: every table with its columns, as
     /// DESCRIBE canonicalizes them. `Err` is the human-readable reason the
     /// database could not be opened or listed.
@@ -199,6 +209,26 @@ pub(crate) fn check_meta(
     // table's *index* to reach into the instantiation results
     if crate::select_tables(dict, table, out).is_none() {
         return;
+    }
+
+    // M10 before instantiation: a declared extension that does not load is
+    // the root cause of any type failures that follow (a JSON column cannot
+    // canonicalize without the json extension), so it reports first
+    let extension_names: Vec<String> = dict.extensions.iter().map(|e| e.value.clone()).collect();
+    for (ext, outcome) in dict
+        .extensions
+        .iter()
+        .zip(duckdb.load_extensions(&extension_names))
+    {
+        if let Err(reason) = outcome {
+            out.push_located(
+                ProblemKind::UnloadableExtension,
+                Severity::Error,
+                "Every declared duckdb extension must load on this engine.",
+                reason,
+                [ext.span.clone()],
+            );
+        }
     }
 
     // dictionary-side coherence first — instantiation failures (M08/M09) and

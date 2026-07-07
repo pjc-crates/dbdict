@@ -236,6 +236,8 @@ fn check_spec(dict: &DataDict, out: &mut ProblemSet) {
     validate_s05_conflicts_present_on_both_sides(dict, out);
     validate_s06_cardinality_consistency(dict, out);
     validate_s16_single_table_description(dict, out);
+    validate_s19_extension_names(dict, out);
+    validate_s20_duplicate_extensions(dict, out);
 
     // rich names live in duckdb, whose identifiers are case-insensitive: two
     // names differing only in ASCII case cannot coexist in the database, so
@@ -1068,6 +1070,59 @@ fn validate_s16_single_table_description(dict: &DataDict, out: &mut ProblemSet) 
             format!("table `{}` has a `{key}`", table.name.value),
             [table.name.span.clone(), span.clone()],
         );
+    }
+}
+
+// --- S19 --------------------------------------------------------------
+
+/// A declared extension name must be non-empty and made of lowercase ASCII
+/// letters, digits, and underscores. This is dbdict's own conservative rule,
+/// not duckdb's: it covers real extension names (`json`, `spatial`, `inet`)
+/// while keeping the name safe to interpolate into a `LOAD` statement — a
+/// dictionary is untrusted input, and a free-form name could smuggle SQL.
+fn validate_s19_extension_names(dict: &DataDict, out: &mut ProblemSet) {
+    for ext in &dict.extensions {
+        let name = &ext.value;
+        let detail = if name.is_empty() {
+            "is empty"
+        } else if !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            "contains characters outside a-z, 0-9, _"
+        } else {
+            continue;
+        };
+        out.push_spec_error(
+            "S19",
+            "An extension name must be lowercase ASCII letters, digits, or underscores.",
+            detail,
+            [ext.span.clone()],
+        );
+    }
+}
+
+// --- S20 --------------------------------------------------------------
+
+/// The same extension declared twice is harmless (LOAD is idempotent) but
+/// almost certainly an editing slip, so it warns rather than errors. Exact
+/// comparison is enough: S19 already pins names to one case.
+fn validate_s20_duplicate_extensions(dict: &DataDict, out: &mut ProblemSet) {
+    let mut seen: HashMap<&str, SourceInfo> = HashMap::new();
+    for ext in &dict.extensions {
+        match seen.get(ext.value.as_str()) {
+            Some(first) => {
+                out.push_spec_warning(
+                    "S20",
+                    "An extension should be declared once.",
+                    format!("`{}` is declared again here", ext.value),
+                    [first.clone(), ext.span.clone()],
+                );
+            }
+            None => {
+                seen.insert(ext.value.as_str(), ext.span.clone());
+            }
+        }
     }
 }
 

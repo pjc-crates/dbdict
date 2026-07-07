@@ -464,3 +464,65 @@ fn s10_rich_column_names_colliding_by_case() {
     #[cfg(unix)]
     assert_snapshot!(d);
 }
+
+// --- duckdb extensions (S19/S20) --------------------------------------------
+
+#[test]
+fn duckdb_extensions_section_is_accepted() {
+    assert_valid_rich(indoc! {"
+        duckdb:
+          extensions:
+            - json
+        tables:
+          - name: t
+            columns:
+              - name: id
+                type: BIGINT
+    "});
+}
+
+#[test]
+fn s19_rejects_an_invalid_extension_name() {
+    let d = failing_rich(indoc! {"
+        duckdb:
+          extensions:
+            - Spatial-Extras
+    "});
+    d.assert_contains(&["S19", "lowercase ASCII"]);
+    #[cfg(unix)]
+    assert_snapshot!(d);
+}
+
+#[test]
+fn s19_rejects_an_empty_extension_name() {
+    // the YAML parser collapses `- ""` to null; lowering keeps it as an
+    // empty string so S19 can point at the item
+    let d = failing_rich(indoc! {r#"
+        duckdb:
+          extensions:
+            - ""
+    "#});
+    d.assert_contains(&["S19", "is empty"]);
+}
+
+#[test]
+fn s20_warns_on_a_duplicate_extension() {
+    let path = rich(indoc! {"
+        duckdb:
+          extensions:
+            - json
+            - json
+    "});
+    let errors = diagnostics(&path, Severity::Error);
+    assert!(
+        errors.is_empty(),
+        "a duplicate is a warning, not an error:\n{}",
+        errors.join("\n")
+    );
+    let warnings = diagnostics(&path, Severity::Warning);
+    assert!(
+        warnings.iter().any(|w| w.contains("S20")),
+        "expected an S20 warning, got:\n{}",
+        warnings.join("\n")
+    );
+}

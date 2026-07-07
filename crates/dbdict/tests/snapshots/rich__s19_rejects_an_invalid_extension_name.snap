@@ -1,0 +1,14 @@
+---
+source: crates/dbdict/tests/rich.rs
+---
+$version: "0.2.0"
+$learn_more: https://github.com/pjc-wspace/dbdict
+duckdb:
+  extensions:
+    - Spatial-Extras
+────────────────────────────────────────
+error: [S19] An extension name must be lowercase ASCII letters, digits, or underscores.
+ --> dict.yaml:5:7
+  |
+5 |     - Spatial-Extras
+  |       ^^^^^^^^^^^^^^ contains characters outside a-z, 0-9, _

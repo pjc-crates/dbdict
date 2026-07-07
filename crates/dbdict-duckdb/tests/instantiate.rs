@@ -59,6 +59,7 @@ fn dict(typedefs: Vec<Typedef>, tables: Vec<Table>) -> DataDict {
         format: Format::Rich,
         typedefs,
         source: None,
+        extensions: Vec::new(),
         tables,
         relationships: Vec::new(),
     }

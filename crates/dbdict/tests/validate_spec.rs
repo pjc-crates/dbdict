@@ -927,3 +927,20 @@ fn s10_legacy_names_differing_by_case_are_distinct() {
                 examples: [1, 2, 3]
     "});
 }
+
+// the `duckdb:` section is a rich-format key: the legacy schema is a closed
+// object, so a legacy document declaring it is rejected structurally
+#[test]
+fn duckdb_section_is_rejected_in_legacy_documents() {
+    let d = failing_dict(indoc! {"
+        duckdb:
+          extensions:
+            - json
+        tables:
+          - name: animals
+            columns:
+              - name: weight
+                type: number
+    "});
+    d.assert_contains(&["duckdb"]);
+}

@@ -59,6 +59,10 @@ pub struct DataDict {
     pub typedefs: Vec<Typedef>,
     /// dictionary-level `source:` (rich format)
     pub source: Option<DictSource>,
+    /// declared duckdb extensions from the top-level `duckdb: extensions:`
+    /// section (rich format), in document order; empty when the section is
+    /// absent. an empty-string entry survives lowering so S19 can report it
+    pub extensions: Vec<Spanned<String>>,
     pub tables: Vec<Table>,
     pub relationships: Vec<Relationship>,
 }

@@ -46,6 +46,21 @@ pub fn lower(root: &YamlWithSourceInfo, problems: &mut ProblemSet) -> DataDict {
         })
     });
 
+    // declared duckdb extensions (rich format): `duckdb: extensions: [...]`.
+    // a null item (the parser collapses an empty `- ""` to null) is kept as
+    // an empty string so S19 can point at it with a clear message
+    let mut extensions = Vec::new();
+    if let Some(e_node) = root
+        .get_hash_value("duckdb")
+        .and_then(|n| n.get_hash_value("extensions"))
+        && let Some(items) = e_node.as_array()
+    {
+        for item in items {
+            let name = item.yaml.as_str().unwrap_or("");
+            extensions.push(Spanned::new(name.to_string(), item.source_info.clone()));
+        }
+    }
+
     let mut tables = Vec::new();
     if let Some(t_node) = root.get_hash_value("tables")
         && let Some(items) = t_node.as_array()
@@ -70,6 +85,7 @@ pub fn lower(root: &YamlWithSourceInfo, problems: &mut ProblemSet) -> DataDict {
         format,
         typedefs,
         source,
+        extensions,
         tables,
         relationships,
     }
@@ -398,6 +414,29 @@ mod tests {
         let col = &table.columns[0];
         assert_eq!(col.label.as_ref().expect("column label").value, "Quantity");
         assert_eq!(col.col_type.as_ref().expect("column type").value, "money");
+    }
+
+    #[test]
+    fn lowers_declared_duckdb_extensions() {
+        let dict = lower_str(indoc! {r#"
+            $version: "0.2.0"
+            duckdb:
+              extensions:
+                - json
+                - ""
+        "#});
+
+        // in document order; the empty item (the parser collapses `- ""` to
+        // null) is kept as "" so S19 can report it
+        assert_eq!(dict.extensions.len(), 2);
+        assert_eq!(dict.extensions[0].value, "json");
+        assert_eq!(dict.extensions[1].value, "");
+    }
+
+    #[test]
+    fn a_dictionary_without_the_duckdb_section_has_no_extensions() {
+        let dict = lower_str("$version: \"0.2.0\"\n");
+        assert!(dict.extensions.is_empty());
     }
 
     // the schema requires `$version`, but lowering must not assume it: a

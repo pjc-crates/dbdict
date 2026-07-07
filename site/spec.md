@@ -55,6 +55,8 @@ The content keys all hold the actual information about the data:
 * [`typedef`](#typedefs) names reusable DuckDB type expressions that column
   `type:`s (and other typedefs) can refer to.
 * [`source`](#source) names the DuckDB database the dictionary describes.
+* [`duckdb`](#duckdb-extensions) declares the DuckDB extensions the
+  dictionary's types depend on.
 * [`tables`](#tables) is where the bulk of most dictionaries will be. It
   describes the tables and their columns.
 * [`relationships`](#relationships) describes the relationships between tables.
@@ -142,6 +144,34 @@ validation never creates, mutates, or locks it for writing.
 a dictionary before its database exists. But the metadata level validates the
 dictionary against the real database, so it requires a `source` naming a
 readable database.
+
+## DuckDB extensions
+
+`duckdb.extensions` declares the
+[DuckDB extensions](https://duckdb.org/docs/current/core_extensions/overview.html)
+the dictionary's types depend on — for example `json` for JSON columns:
+
+```yaml
+duckdb:
+  extensions:
+    - json
+```
+
+Declared extensions are `LOAD`ed into every engine connection dbdict opens
+for the dictionary, and the metadata level checks that each one actually
+loads on the local engine, reporting M10 with DuckDB's own error when one
+does not (see [Validation](validation.md)).
+
+* A name must be lowercase ASCII letters, digits, or underscores (S19) —
+  the conservative shape that covers real extension names and keeps the
+  name safe to place in a `LOAD` statement. Declaring the same extension
+  twice is a warning (S20).
+* Declaring is LOAD-only: dbdict never `INSTALL`s an extension, so it never
+  fetches one from the network. Validation runs with DuckDB's external
+  access disabled (a dictionary is untrusted input), which also blocks
+  loading extension binaries from disk — an extension is available to
+  validation only when it is compiled into dbdict's bundled engine. `json`
+  is compiled in.
 
 ## Tables
 

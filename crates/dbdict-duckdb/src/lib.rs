@@ -15,5 +15,6 @@ mod native;
 pub use native::{
     NativeDuckdb, TypedefExpansion, classify, count_duplicate_keys, count_duplicate_values,
     count_nulls, count_orphaned_values, count_overmatched_rows, execute_and_describe,
-    expand_typedefs, instantiate, quote_ident, read_schema, typedef_creation_order,
+    expand_typedefs, instantiate, load_extensions, quote_ident, read_schema,
+    typedef_creation_order,
 };

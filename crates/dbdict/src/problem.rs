@@ -168,6 +168,9 @@ pub enum ProblemKind {
     /// when creating its scratch table; duckdb's reason is in
     /// [`Problem::message`].
     InvalidColumnType,
+    /// `M10` (rich format) — a declared `duckdb: extensions:` entry does not
+    /// LOAD on the local engine; duckdb's reason is in [`Problem::message`].
+    UnloadableExtension,
     /// `D01` — a `required` (or `primary_key`) column contains nulls. `rows`
     /// lists the first few offending row numbers (1-based); `count` is the total.
     /// The rich path counts via a database query, which has no stable row
@@ -213,6 +216,7 @@ impl ProblemKind {
             ProblemKind::ExtraTable => "M07",
             ProblemKind::InvalidTypedef => "M08",
             ProblemKind::InvalidColumnType => "M09",
+            ProblemKind::UnloadableExtension => "M10",
             ProblemKind::NullsInRequired { .. } => "D01",
             ProblemKind::DuplicateKey { .. } => "D02",
             ProblemKind::DuplicateValues { .. } => "D03",
@@ -235,7 +239,8 @@ impl ProblemKind {
             | ProblemKind::MissingTable
             | ProblemKind::ExtraTable
             | ProblemKind::InvalidTypedef
-            | ProblemKind::InvalidColumnType => Level::Meta,
+            | ProblemKind::InvalidColumnType
+            | ProblemKind::UnloadableExtension => Level::Meta,
             ProblemKind::NullsInRequired { .. }
             | ProblemKind::DuplicateKey { .. }
             | ProblemKind::DuplicateValues { .. }

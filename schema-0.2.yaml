@@ -72,6 +72,25 @@ object:
               properties:
                 file: string
 
+    # Engine-level declarations: the DuckDB extensions this dictionary's
+    # types depend on (e.g. `json`, `spatial` for GEOMETRY, `inet`).
+    # Declared extensions are LOADed into every connection dbdict opens for
+    # this dictionary; whether each one actually loads on the local engine
+    # is a metadata-level check (M10). Name validity (non-empty, safe
+    # charset) is S19's job; `anyOf: [string, null]` lets an empty item
+    # through to that check for a clear message (the YAML parser collapses
+    # `""` to null).
+    duckdb:
+      object:
+        closed: true
+        required: [extensions]
+        properties:
+          extensions:
+            arrayOf:
+              anyOf:
+                - string
+                - null
+
     tables:
       arrayOf:
         object:

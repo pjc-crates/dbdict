@@ -1096,3 +1096,151 @@ fn clean_match_validates_ok() {
     let problems = validate_meta(&yaml, None, &backend);
     assert_eq!(problems.status(), Status::Ok, "got {:?}", problems.items);
 }
+
+// --- M10: declared extensions ------------------------------------------------
+
+mod extension_checks {
+    use super::*;
+    use dbdict::rich::OrientedConjunct;
+
+    /// a dictionary declaring one extension, with a source and one table that
+    /// match the fake database exactly — any problem reported is about the
+    /// extension alone
+    fn write_ext_dict(dir: &Path) -> PathBuf {
+        write_yaml(
+            dir,
+            indoc! {r#"
+                $version: "0.2.0"
+                $learn_more: https://github.com/pjc-wspace/dbdict
+                duckdb:
+                  extensions:
+                    - json
+                source:
+                  duckdb:
+                    file: warehouse.duckdb
+                tables:
+                  - name: trades
+                    columns:
+                      - name: qty
+                        type: BIGINT
+            "#},
+        )
+    }
+
+    fn matching_backend() -> FakeDuckdb {
+        FakeDuckdb {
+            instantiated: Instantiated {
+                tables: vec![vec![col("qty", "BIGINT")]],
+                failures: Vec::new(),
+            },
+            db: Ok(vec![TableSchema {
+                name: "trades".to_string(),
+                columns: vec![col("qty", "BIGINT")],
+            }]),
+        }
+    }
+
+    #[test]
+    fn a_declared_extension_that_loads_is_no_problem() {
+        let dir = temp_dir();
+        let yaml = write_ext_dict(&dir);
+        // FakeDuckdb keeps the trait's default load_extensions: everything loads
+        let problems = validate_meta(&yaml, None, &matching_backend());
+        assert!(problems.items.is_empty(), "got {:?}", problems.items);
+    }
+
+    /// delegates to [`FakeDuckdb`] but reports every declared extension as
+    /// unloadable, so M10 is exercised alone
+    struct NoExtensions(FakeDuckdb);
+
+    impl DuckdbBackend for NoExtensions {
+        fn instantiate(&self, dict: &DataDict) -> Instantiated {
+            self.0.instantiate(dict)
+        }
+
+        fn load_extensions(&self, extensions: &[String]) -> Vec<Result<(), String>> {
+            extensions
+                .iter()
+                .map(|name| Err(format!("Extension \"{name}\" not found.")))
+                .collect()
+        }
+
+        fn read_schema(&self, db_file: &Path) -> Result<Vec<TableSchema>, String> {
+            self.0.read_schema(db_file)
+        }
+
+        fn classify(&self, canonical_type: &str) -> TypeCategory {
+            self.0.classify(canonical_type)
+        }
+
+        fn count_nulls(
+            &self,
+            _db_file: &Path,
+            _table: &str,
+            _column: &str,
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
+
+        fn count_duplicate_keys(
+            &self,
+            _db_file: &Path,
+            _table: &str,
+            _key_columns: &[String],
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
+
+        fn count_duplicate_values(
+            &self,
+            _db_file: &Path,
+            _table: &str,
+            _column: &str,
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
+
+        fn count_orphaned_values(
+            &self,
+            _db_file: &Path,
+            _fk_table: &str,
+            _fk_column: &str,
+            _pk_table: &str,
+            _pk_column: &str,
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
+
+        fn count_overmatched_rows(
+            &self,
+            _db_file: &Path,
+            _probe_table: &str,
+            _other_table: &str,
+            _conjuncts: &[OrientedConjunct],
+        ) -> Result<usize, String> {
+            unreachable!("validate_meta must not run data queries")
+        }
+    }
+
+    #[test]
+    fn an_unloadable_extension_is_m10_with_duckdbs_reason() {
+        let dir = temp_dir();
+        let yaml = write_ext_dict(&dir);
+        let problems = validate_meta(&yaml, None, &NoExtensions(matching_backend()));
+        assert_eq!(problems.status(), Status::Error);
+        assert!(
+            matches!(
+                problems.items.as_slice(),
+                [Problem { code: Some(code), kind: ProblemKind::UnloadableExtension, .. }]
+                    if *code == "M10"
+            ),
+            "got {:?}",
+            problems.items
+        );
+        assert!(
+            problems.items[0].message.contains("\"json\" not found"),
+            "duckdb's reason should be the message, got {:?}",
+            problems.items[0].message
+        );
+    }
+}
