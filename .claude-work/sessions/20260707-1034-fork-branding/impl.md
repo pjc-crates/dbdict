@@ -27,32 +27,47 @@
   `cargo clippy --workspace --all-targets` + `cargo fmt --all --check`
   clean; `grep -rn "tidyverse" crates/` returns nothing
 
-### phase 2: site + meta rebrand, index.md rewrite
-- [ ] delete site/CNAME (claims data-dict.tidyverse.org — not ours)
-- [ ] site/_quarto.yml: drop the Plausible analytics script block;
+### phase 2: site + meta rebrand, index.md rewrite — DONE 2026-07-07T13:57:13+12:00
+- [x] delete site/CNAME (claims data-dict.tidyverse.org — not ours)
+- also: removed the `resources: CNAME` entry from _quarto.yml with it
+      (quarto would fail on a missing resource)
+- [x] site/_quarto.yml: drop the Plausible analytics script block;
       repo-url and the nav github link →
       https://github.com/pjc-wspace/dbdict; site-url →
       https://pjc-wspace.github.io/dbdict/
       (Inferred: the natural Pages URL for this repo — harmless until
       publishing, revisit when the publish decision is made)
-- [ ] site/spec.md:34: the `$learn_more` recommendation prose points at
+- also: website title → "dbdict.yaml" and description mentions
+      DuckDB-native — consistency with the dbdict-first index.md
+- [x] site/spec.md:34: the `$learn_more` recommendation prose points at
       the new URL
-- [ ] site/index.md: dbdict-first rewrite — lead with the rich
+- [x] site/index.md: dbdict-first rewrite — lead with the rich
       DuckDB-native `dbdict.yaml` format (typedefs, exact type
       round-trip, validate-meta/validate-data, ddl) and the fork
-      rationale; short lineage note crediting tidyverse `data-dict`;
-      legacy `data-dict.yaml` path mentioned as preserved; keep only
-      upstream concepts that still apply; examples links checked
-      against site/examples/ so none are dead
-      — draft reviewed by user before the phase closes
-- [ ] .claude/claude.md: the `site/` bullet describes upstream's
-      published site and a `.github/workflows/publish-site.yaml` that
-      doesn't exist in the fork — rewrite the bullet to match reality
-      (site is unpublished; publishing is a future decision)
-- [ ] README.md: no change — the fork-credit note (line 10) is the one
-      sanctioned upstream reference; confirm it survived the sweep
+      rationale; Lineage section credits tidyverse `data-dict` (MIT)
+      and reframes the five upstream examples as legacy-format
+      examples (all verified present, all v0.1.0); Why bullets kept
+      where still true, parquet bullet replaced with the single-engine
+      argument; Direction section states the fork roadmap (dummy data,
+      Python/Julia codegen, doc generation)
+      — draft reviewed by user (approved via /ws done)
+- [x] extension (user, 2026-07-07): full .claude/claude.md rewrite —
+      describe dbdict as it stands, mention the original data-dict.yaml
+      project only as lineage with the decision to move away noted;
+      every factual claim re-verified against the repo (crate list, CLI
+      subcommands, module layout, fixture dirs, schema files, Problem
+      fields); the upstream comment policy ("default to no comment")
+      contradicted the fork's training-wheels convention — replaced
+      with a pointer to the repo-root CLAUDE.md; stale nanoparquet
+      instruction dropped (download-examples.R uses no parquet); the
+      original single-bullet `site/` fix was subsumed by this rewrite
+- [x] README.md: no change — the fork-credit note (line 10) survived
+      the sweep
 - **verify:** `grep -rni "tidyverse" . --exclude-dir=target
-  --exclude-dir=.git --exclude-dir=.claude-work` returns only the
-  README credit and CLAUDE.md's fork note; `cargo test --workspace`
-  still green; quarto render skipped (quarto not installed — noted,
-  best-effort per goal)
+  --exclude-dir=.git --exclude-dir=.claude-work` returns only
+  deliberate attribution — README credit, root CLAUDE.md fork note,
+  LICENSE copyright, and site/index.md's Lineage section (the last two
+  weren't named in the original wording but are attribution by design,
+  aligned with the goal's "attribution stays" scope); `cargo test
+  --workspace` still green (290); quarto render skipped (quarto not
+  installed — noted, best-effort per goal) — PASSED

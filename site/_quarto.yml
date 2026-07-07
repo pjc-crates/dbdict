@@ -1,17 +1,15 @@
 project:
   type: website
   output-dir: _site
-  resources:
-    - CNAME
 
 website:
-  title: "data-dict.yaml"
-  site-url: https://data-dict.tidyverse.org
-  repo-url: https://github.com/tidyverse/data-dict
+  title: "dbdict.yaml"
+  site-url: https://pjc-wspace.github.io/dbdict/
+  repo-url: https://github.com/pjc-wspace/dbdict
   description: >
-    A YAML-based data dictionary specification for describing collections of
-    related tables — their columns, types, constraints, relationships, and
-    domain vocabulary.
+    A DuckDB-native YAML data dictionary specification for describing
+    collections of related tables — their columns, exact types, constraints,
+    relationships, and domain vocabulary.
   llms-txt: true
   navbar:
     left:
@@ -25,13 +23,10 @@ website:
         text: Examples
     right:
       - icon: github
-        href: https://github.com/tidyverse/data-dict
+        href: https://github.com/pjc-wspace/dbdict
         aria-label: GitHub
 
 format:
   html:
     theme: cosmo
     toc: true
-    include-in-header:
-      text: |
-        <script defer data-domain="data-dict.tidyverse.org" src="https://plausible.io/js/plausible.js"></script>

@@ -31,7 +31,7 @@ The metadata keys are:
   breaking changes will always increment at least the minor version.
 * `$learn_more` (optional, but recommended): a URL where readers can learn
   about the format, so that people and tools meeting the file for the first
-  time can find out what it is. Use <http://data-dict.tidyverse.org/>. Omitting
+  time can find out what it is. Use <https://github.com/pjc-wspace/dbdict>. Omitting
   it is valid, but a validator will emit a warning rather than an error (see
   [Validation](validation.md)).
 
