@@ -686,6 +686,7 @@ name = "dbdict-dummy-data"
 version = "0.0.1"
 dependencies = [
  "dbdict",
+ "quarto-source-map",
 ]
 
 [[package]]

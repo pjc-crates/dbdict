@@ -12,3 +12,7 @@ repository.workspace = true
 
 [dependencies]
 dbdict.workspace = true
+
+[dev-dependencies]
+# tests build DataDict fixtures by hand with placeholder spans
+quarto-source-map.workspace = true

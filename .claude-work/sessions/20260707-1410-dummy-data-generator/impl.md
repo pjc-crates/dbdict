@@ -186,26 +186,39 @@ generated database must pass it in tests.
 - **verify:** `cargo test -p dbdict-dummy-data-duckdb`,
   `cargo clippy --workspace`, `cargo fmt --check`; workspace still builds
 
-### phase 3: generation plan (dbdict-dummy-data)
+### phase 3: generation plan (dbdict-dummy-data) — DONE 2026-07-07T21:05:30+12:00
 
-- [ ] `GenerateOptions`: global row count, per-table overrides
-      (`HashMap<String, u64>`), seed, fixed NULL fraction for optional
-      columns (deterministic which rows get NULL)
-- [ ] plan builder `plan(dict, &opts) -> Result<Plan, DummyDataError>`:
-      refuse `Format::Legacy`; topo-order tables via
-      `DataDict::foreign_key_targets` (FK cycle → error); per-column
+- [x] `GenerateOptions`: global row count (default 10), per-table overrides
+      (`HashMap<String, u64>`), seed (default 0), NULL fraction for optional
+      columns (default 0.25, validated to 0.0..=1.0 — which rows get NULL
+      is phase 4's deterministic rule)
+- [x] plan builder `plan(dict, &opts) -> Result<Plan, DummyDataError>`
+      (`src/plan.rs`): refuse `Format::Legacy`; topo-order tables via
+      `DataDict::foreign_key_targets` (Kahn's, document-order tie-break;
+      FK cycle incl. self-reference → error); per-column
       roles: composite-PK/unique → indexed-unique, FK → draw from target
       (injective draw when the FK column itself must be unique, e.g.
       one-to-one or `unique` FK), else plain fill (NULLs only if not
       `is_required_implied`)
-- [ ] cardinality analysis (equality joins): many-to-one/one-to-many
+- [x] cardinality analysis (equality joins): many-to-one/one-to-many
       satisfied when the "one" side join columns are unique — verify or
-      refuse; one-to-one → both sides injective; mark range-join
-      (`Ge/Le/Gt/Lt`) relationships in the plan as slot-based (semantics
-      implemented in phase 5, refused until then)
-- [ ] unit tests with hand-built fixtures (`SourceInfo::for_test`,
-      mirroring `crates/dbdict-ddl/tests/generate.rs` helpers): table
-      order, role assignment, legacy/cycle/capacity errors
+      refuse; one-to-one → both sides injective. verified positionally
+      (left/right of the first conjunct, mirroring rich.rs D05) so
+      self-joins distinguish their sides; reduces to "≥1 join column on
+      each one side is `is_unique_implied`"
+- also (deviation): range joins (`Ge/Le/Gt/Lt`) are *refused outright*
+  (`RangeJoinUnsupported`) rather than marked slot-based in the plan —
+  plan() erroring means there is no plan to carry the mark; the marking
+  machinery lands in phase 5 with the semantics
+- also: extra plan-time refusals beyond the plan: unresolved FK (no PK
+  pairing), ambiguous FK (>1 distinct target), injective-draw pigeonhole
+  (rows > target rows), FK draw from an empty target, unparsed join
+  (S04), unknown table in row overrides, NULL fraction out of range —
+  all descriptive `DummyDataError` variants in DdlError's style
+- [x] unit tests with hand-built fixtures (`SourceInfo::for_test`,
+      mirroring `crates/dbdict-ddl/tests/generate.rs` helpers): 20 tests
+      in `tests/plan.rs` — table order, row counts, role assignment,
+      and every refusal path
 - **verify:** `cargo test -p dbdict-dummy-data`; clippy + fmt clean
 
 ### phase 4: end-to-end generation + D01–D05 oracle (equality joins)
