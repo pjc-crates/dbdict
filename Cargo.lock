@@ -654,6 +654,8 @@ dependencies = [
  "dbdict",
  "dbdict-ddl",
  "dbdict-duckdb",
+ "dbdict-dummy-data",
+ "dbdict-dummy-data-duckdb",
  "dbdict-parquet",
  "duckdb",
  "indoc",

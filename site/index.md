@@ -16,7 +16,9 @@ types in the dictionary match the database exactly, not approximately. The
 the database's schema, and against the data's actual values (nulls in
 `required` columns, duplicated keys, orphaned foreign keys, violated
 cardinality). It can also generate an executable DDL script from the
-dictionary. See [the specification](spec.md) and [validation](validation.md)
+dictionary, and generate a DuckDB database of dummy data whose values satisfy
+every declared constraint by construction. See [the specification](spec.md)
+and [validation](validation.md)
 for details, or the [CLI](https://github.com/pjc-wspace/dbdict#readme) to get
 started.
 
@@ -84,14 +86,12 @@ data actually _means_.
 
 ## Direction
 
-The validator and the DDL generator ship today (see the
-[CLI](https://github.com/pjc-wspace/dbdict#readme)). The architecture
-separates the dictionary model from the tools that consume it, and more
-consumers are planned:
+The validator, the DDL generator, and the dummy-data generator ship today (see
+the [CLI](https://github.com/pjc-wspace/dbdict#readme)) — the last generating
+sample data that satisfies the declared types, constraints, and relationship
+cardinalities by construction. The architecture separates the dictionary model
+from the tools that consume it, and more consumers are planned:
 
-* **Dummy data generation**: generate valid sample data from a dictionary —
-  data that satisfies the declared types, constraints, and relationship
-  cardinalities by construction.
 * **Code generation**: emit Python and Julia bindings for a dictionary's
   tables and types.
 * **User facing documentation**: turn a maintained dictionary into attractive

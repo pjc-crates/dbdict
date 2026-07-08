@@ -381,26 +381,64 @@ generated database must pass it in tests.
   failed, clippy 0 warnings, `cargo fmt --check` clean; agent code review
   done and its findings fixed
 
-### phase 6: CLI subcommand + SQL export + docs
+### phase 6: CLI subcommand + SQL export + docs — DONE 2026-07-09T11:24:05+12:00
 
-- [ ] `crates/dbdict-cli/src/main.rs`: `Command::Dummy { dict, rows,
-      table_rows, seed, out, sql, force }` + `run_dummy` mirroring
-      `run_ddl` (`main.rs:302`): load_and_lower → render warnings →
-      generate → write `--out <file.duckdb>` (refuse existing unless
-      `--force`), optional `--sql <file.sql>` export
-- [ ] flags: `--rows N` (global default, default 10), `--rows-table
-      TABLE=N` (repeatable), `--seed N` (default 0)
-- [ ] e2e tests in `crates/dbdict-cli/tests/cli.rs`
-      (`CARGO_BIN_EXE_dbdict` + insta pattern): happy path (generate then
-      `validate-data` the output via the CLI), sql export, refuse-existing,
-      legacy refusal; update `no_args_lists_all_subcommands` snapshot
-- [ ] docs: README command listing; site page for the generator if the
-      site structure has a natural home (check `site/` during the phase)
-- **verify:** `cargo test --workspace`, clippy, fmt; manual smoke:
-  `dbdict dummy examples/... -o /tmp/x.duckdb && dbdict validate-data ...`
+- [x] `crates/dbdict-cli/src/main.rs`: `Command::Dummy(DummyArgs)` +
+      `run_dummy` mirroring `run_ddl`: load_and_lower → render warnings →
+      generate → write `--out <file.duckdb>`. Used a `DummyArgs`
+      `#[derive(clap::Args)]` struct (like the existing `ValidateArgs`)
+      because the field count outgrew inline enum fields
+- [x] flags: `--rows N` (default 10), `--rows-table TABLE=N` (repeatable,
+      parsed by `parse_table_rows`), `--seed N` (default 0), `--sql
+      <file>`, `--force`, and (added on user direction) `--null-fraction`
+      (default **0.10**, down from the library's 0.25 default; the library
+      default is unchanged, the CLI just passes 0.10)
+- [x] e2e tests in `crates/dbdict-cli/tests/cli.rs`: happy path (generate
+      → `validate-data` via the CLI, now asserting the default 10 rows
+      landed), sql export, refuse-existing, `--force` overwrite (asserts
+      the db reflects the *second* run), row-count flags, seed
+      pass-through, `--null-fraction` wiring, legacy refusal; +3
+      `parse_table_rows` unit tests; updated the `no_args` snapshot + the
+      README listing
+- [x] docs: README `dummy` bullet + command listing; `site/index.md`
+      moved dummy-data generation from "Direction" (planned) to shipping
+- also (TDD deviation caught during phase): the legacy fixture must be
+  *spec-valid* (add `examples:`) to reach the generator's `LegacyUnsupported`
+  refusal — a bare `type: number` fails at S07 in `load_and_lower` first.
+  Flagged that the pre-existing `ddl_refuses_a_legacy_dictionary` test is a
+  false positive (its `contains("legacy")` matches the temp-dir path, not any
+  message; its fixture never reaches the generate-level refusal) — recorded,
+  not fixed (out of scope; belongs with the ddl crate)
+- also (phase-boundary `/code-review`, 8 finder angles, high effort): 10
+  findings; **9 fixed, 1 deferred** (user-directed). Fixes —
+  (#1/#6) `--force` now writes to a sibling temp file then renames over
+  `--out` via `write_db_into_place`, closing the delete-then-write data-loss
+  window and removing a stale `<out>.wal` sidecar (smoke-confirmed); an
+  `out.exists() && !force` fail-fast added before the expensive generate;
+  (#2) `--sql`/README no longer claim the export is a complete standalone
+  script — it omits the `LOAD <ext>` statements write_db runs (the private
+  `Generated.extensions`); (#3) README "never writes over the source file"
+  corrected to the true guarantee (`--out` has no default); (#4)
+  `--null-fraction` flag added + documented; (#5/#7) happy-path asserts rows
+  were generated, `--force` test proves an actual rewrite; (#8/#9)
+  `parse_table_rows` rejects an empty table name and no longer mislabels an
+  out-of-range count as "non-numeric". **Deferred (#10):** extracting the
+  3×-duplicated load-and-render scaffold (run_resolve/run_ddl/run_dummy) into
+  a shared helper — a follow-up touching sibling functions, outside this
+  phase's CLI scope
+- **verify:** PASSED 2026-07-09 — `cargo test --workspace` **414 passed / 0
+  failed**, clippy 0 warnings, `cargo fmt --check` clean; real-binary smoke
+  of a rich dict (structs/enums/decimals/arrays + range join): generate →
+  `validate-data` == ok, `--force` temp+rename leaves no stray files and
+  clears a planted stale `.wal`, `--null-fraction 0` generates cleanly
 
 > --out is always explicit; we never default to the dictionary's declared
 > `source.file` — too easy to clobber a real database
 
 > --install-extensions (network INSTALL opt-in) deliberately not built
 > this session — LOAD-only everywhere; queue for a later session
+
+> follow-ups queued (not built): #10 shared `load_lowered_or_exit` helper;
+> making `Generated.script` self-contained (fold in the extension `LOAD`s)
+> so `--sql` is a complete standalone reproduction; fixing the
+> `ddl_refuses_a_legacy_dictionary` false-positive test

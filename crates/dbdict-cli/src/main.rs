@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -23,6 +24,8 @@ enum Command {
     Resolve { dict: Option<PathBuf> },
     /// Print executable DuckDB DDL generated from a data dictionary [default: .]
     Ddl { dict: Option<PathBuf> },
+    /// Generate a DuckDB database of dummy data from a data dictionary [default: .]
+    Dummy(DummyArgs),
     /// Print the dbdict.yaml specification
     Spec,
     /// Inspect data types of a data source
@@ -47,6 +50,36 @@ struct ValidateArgs {
     /// Emit results as JSON
     #[arg(long)]
     json: bool,
+}
+
+/// Arguments for `dummy`. `--out` is required and never defaults to the
+/// dictionary's own source file — generating over a real database would be too
+/// easy to do by accident.
+#[derive(clap::Args)]
+struct DummyArgs {
+    dict: Option<PathBuf>,
+    /// Where to write the generated .duckdb database (required)
+    #[arg(short, long)]
+    out: PathBuf,
+    /// Also write the generated SQL script (DDL + INSERTs) to this file
+    #[arg(long)]
+    sql: Option<PathBuf>,
+    /// Overwrite --out if it already exists (otherwise refuse)
+    #[arg(long)]
+    force: bool,
+    /// Rows per table unless overridden with --rows-table
+    #[arg(long, default_value_t = 10)]
+    rows: u64,
+    /// Per-table row-count override, e.g. --rows-table trades=100 (repeatable)
+    #[arg(long = "rows-table", value_name = "TABLE=N")]
+    table_rows: Vec<String>,
+    /// Seed for reproducible generation
+    #[arg(long, default_value_t = 0)]
+    seed: u64,
+    /// Fraction of each optional column's values to make NULL, 0.0..=1.0
+    /// (0.0 fills every value; required and key columns are never nulled)
+    #[arg(long, default_value_t = 0.10)]
+    null_fraction: f64,
 }
 
 #[derive(Subcommand)]
@@ -122,6 +155,7 @@ fn main() -> ExitCode {
         }),
         Command::Resolve { dict } => run_resolve(dict),
         Command::Ddl { dict } => run_ddl(dict),
+        Command::Dummy(args) => run_dummy(args),
         Command::Spec => {
             print!("{}", dbdict::SPEC_MD);
             ExitCode::SUCCESS
@@ -333,6 +367,159 @@ fn run_ddl(dict: Option<PathBuf>) -> ExitCode {
     }
 }
 
+/// Parse the repeatable `--rows-table TABLE=N` entries into a map. Each entry
+/// must contain a single `=`, a non-empty table name, and a row count that fits
+/// in a u64. On a malformed entry, returns a message naming it (the last write
+/// for a repeated table wins, matching clap's usual "last flag wins" feel).
+fn parse_table_rows(entries: &[String]) -> Result<HashMap<String, u64>, String> {
+    let mut map = HashMap::new();
+    for entry in entries {
+        let (table, count) = entry
+            .split_once('=')
+            .ok_or_else(|| format!("--rows-table entry `{entry}` must be TABLE=N"))?;
+        // reject an empty table name here rather than let `{"": n}` flow through
+        // and surface later as a confusing "table \"\" is not declared" error
+        if table.is_empty() {
+            return Err(format!(
+                "--rows-table entry `{entry}` has an empty table name — expected TABLE=N"
+            ));
+        }
+        // a u64 parse failure covers both non-numeric text and out-of-range
+        // values (negative, too big); the message names neither specifically so
+        // it never misdirects — it just says what a valid count looks like
+        let count: u64 = count.parse().map_err(|_| {
+            format!(
+                "--rows-table entry `{entry}` has an invalid row count `{count}` — \
+                 expected a non-negative whole number"
+            )
+        })?;
+        map.insert(table.to_string(), count);
+    }
+    Ok(map)
+}
+
+/// Run `dummy`: load and lower the dictionary, generate dummy data, and write
+/// it to a `.duckdb` file at `out`. Mirrors `run_ddl`'s error handling — load
+/// errors and generation refusals go to stderr with a nonzero exit. An existing
+/// `out` is refused unless `--force`; the write itself goes through a temp file
+/// and a rename so a failed run never destroys an existing database.
+fn run_dummy(args: DummyArgs) -> ExitCode {
+    let out = args.out.as_path();
+    // parse the repeatable --rows-table entries before touching the dictionary,
+    // so a malformed flag fails fast regardless of the dictionary's validity
+    let table_rows = match parse_table_rows(&args.table_rows) {
+        Ok(table_rows) => table_rows,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let dict_path = match resolve_dict_path(args.dict) {
+        Ok(dict_path) => dict_path,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match dbdict::load_and_lower(&dict_path) {
+        Err(problems) => {
+            for line in problems.render() {
+                eprintln!("{line}");
+            }
+            ExitCode::FAILURE
+        }
+        Ok((problems, dict)) => {
+            // an Ok load can still carry warnings — keep them visible
+            for line in problems.render() {
+                eprintln!("{line}");
+            }
+            // fail fast before the expensive generate if the target exists and
+            // we may not replace it — avoids wasting a generation pass and any
+            // --sql side effect on a run that was always going to be refused
+            if out.exists() && !args.force {
+                eprintln!(
+                    "output file {} already exists — refusing to overwrite (use --force)",
+                    out.display()
+                );
+                return ExitCode::FAILURE;
+            }
+            let opts = dbdict_dummy_data::GenerateOptions {
+                rows: args.rows,
+                table_rows,
+                seed: args.seed,
+                null_fraction: args.null_fraction,
+            };
+            let generated = match dbdict_dummy_data_duckdb::generate(&dict, &opts) {
+                Ok(generated) => generated,
+                Err(err) => {
+                    eprintln!("{err}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            // optional --sql export: the DDL + INSERT script only. it is NOT a
+            // fully self-contained script — any declared duckdb extensions are
+            // LOADed by write_db itself, not written here
+            if let Some(sql_path) = args.sql.as_deref()
+                && let Err(err) = std::fs::write(sql_path, &generated.script)
+            {
+                eprintln!("could not write {}: {err}", sql_path.display());
+                return ExitCode::FAILURE;
+            }
+            match write_db_into_place(&generated, out) {
+                Ok(()) => {
+                    println!("wrote dummy data to {}", out.display());
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("{err}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+    }
+}
+
+/// Write the generated database into place atomically: write to a sibling temp
+/// file, then rename it over `out`. Renaming avoids the window a naive
+/// delete-then-write would open — if the write fails, the existing `out` is left
+/// untouched (the library's own `write_db` refuses to touch an existing path for
+/// the same reason; this is how the CLI honors `--force` without that risk).
+/// Rename-over-existing is atomic on unix, the target platform.
+fn write_db_into_place(
+    generated: &dbdict_dummy_data_duckdb::Generated,
+    out: &Path,
+) -> Result<(), String> {
+    // a sibling temp on the same filesystem, so the rename below is a cheap
+    // metadata move rather than a copy across devices; the pid keeps concurrent
+    // runs writing to the same --out from colliding on the temp name
+    let tmp = out.with_extension(format!("tmp-{}.duckdb", std::process::id()));
+    // clear leftovers from a previously killed run of this pid before writing
+    // (write_db refuses a path that already exists)
+    let _ = std::fs::remove_file(&tmp);
+    let _ = std::fs::remove_file(wal_path(&tmp));
+    if let Err(err) = generated.write_db(&tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err.to_string());
+    }
+    // Inferred: duckdb keeps a write-ahead log beside a database as `<file>.wal`.
+    // a best-effort remove of any stale sidecar at the target keeps it from being
+    // replayed into the database we are about to rename into place; harmless if
+    // absent or (were the convention ever different) misnamed — it just no-ops
+    let _ = std::fs::remove_file(wal_path(out));
+    std::fs::rename(&tmp, out).map_err(|err| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("could not move the generated database into place: {err}")
+    })
+}
+
+/// The path duckdb uses for a database's write-ahead log: the database path with
+/// `.wal` appended (see [`write_db_into_place`] for the sourcing caveat).
+fn wal_path(db: &Path) -> PathBuf {
+    let mut wal = db.as_os_str().to_owned();
+    wal.push(".wal");
+    PathBuf::from(wal)
+}
+
 /// Print typedef expansions as `name  declared-expression  → canonical`: the
 /// globals first, then each table's entries under a `table <name>:` heading.
 /// `expand_typedefs` returns them already in that order.
@@ -508,6 +695,39 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn parse_table_rows_parses_valid_entries() {
+        let entries = vec!["trades=100".to_string(), "categories=3".to_string()];
+        let map = parse_table_rows(&entries).unwrap();
+        assert_eq!(map.get("trades"), Some(&100));
+        assert_eq!(map.get("categories"), Some(&3));
+    }
+
+    #[test]
+    fn parse_table_rows_rejects_empty_table_name() {
+        // `=5` has no table before the `=`; that is a malformed flag, not a
+        // request to override a table literally named "" (which would only
+        // surface later as a confusing UnknownTableOverride)
+        let err = parse_table_rows(&["=5".to_string()]).unwrap_err();
+        assert!(err.contains("=5"), "error should name the bad entry: {err}");
+        assert!(
+            !err.contains("non-numeric"),
+            "an empty table name is not a numeric problem: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_table_rows_reports_out_of_range_count_accurately() {
+        // -5 and a huge value are numeric but not valid u64 row counts; the
+        // message must not claim they are "non-numeric" (misdirects the user)
+        let neg = parse_table_rows(&["trades=-5".to_string()]).unwrap_err();
+        assert!(neg.contains("trades=-5"), "should name the entry: {neg}");
+        assert!(
+            !neg.contains("non-numeric"),
+            "-5 is numeric but out of range, not non-numeric: {neg}"
+        );
     }
 
     #[test]

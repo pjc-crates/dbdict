@@ -11,6 +11,7 @@ Commands:
   validate-data  Validate a dataset's values against a data dictionary
   resolve        Print each typedef's canonical DuckDB expansion [default: .]
   ddl            Print executable DuckDB DDL generated from a data dictionary [default: .]
+  dummy          Generate a DuckDB database of dummy data from a data dictionary [default: .]
   spec           Print the dbdict.yaml specification
   types parquet  Print column types for a parquet file
   types duckdb   Print every table's column types from a DuckDB database

@@ -60,6 +60,7 @@ Commands:
   validate-data  Validate a dataset's values against a data dictionary
   resolve        Print each typedef's canonical DuckDB expansion [default: .]
   ddl            Print executable DuckDB DDL generated from a data dictionary [default: .]
+  dummy          Generate a DuckDB database of dummy data from a data dictionary [default: .]
   spec           Print the dbdict.yaml specification
   types parquet  Print column types for a parquet file
   types duckdb   Print every table's column types from a DuckDB database
@@ -94,6 +95,22 @@ Commands:
   advises "For best bulk load performance, avoid primary key constraints".
   Instead, load the data and run `validate-data` — the dictionary's
   constraints are checked by query, after the fact.
+* `dummy` generates a DuckDB database of dummy data from a rich dictionary and
+  writes it to `--out <file.duckdb>` (required, with no default — so it never
+  targets the dictionary's own `source` file by accident). An existing `--out`
+  is refused unless `--force`; the write goes through a temp file and a rename,
+  so a failed run never destroys an existing database. Values are type- and
+  constraint-correct by construction: every generated database passes
+  `validate-data` (D01–D05). Use `--rows N` for the global row count
+  (default 10), `--rows-table TABLE=N` to override one table, and `--seed N`
+  (default 0) for reproducible output. By default about 10% of each optional
+  column's values are NULL; set `--null-fraction 0.0` to fill every value (or
+  higher, up to `1.0`, for more NULLs). `--sql <file.sql>` also writes the
+  generated `CREATE`/`INSERT` script for inspection — note this is the data
+  script only; any declared DuckDB extensions are `LOAD`ed by the tool
+  separately and are not included in the file. Values are correct rather than
+  realistic — no names, addresses, or distributions. Legacy (0.1.0)
+  dictionaries are refused.
 * `types duckdb` / `types parquet` print the column types of a data source.
 * `skill read` / `skill write` print embedded agent skills for working with
   data dictionaries, and `spec` prints the full specification.
