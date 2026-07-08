@@ -181,6 +181,193 @@ fn one_to_one_with_unique_fk_passes_validate_data() {
     );
 }
 
+/// Range-join fixture skeleton: `windows` owns slots (`lo`/`hi`),
+/// `events.at` probes them. Callers splice in the join line, cardinality
+/// and any extra columns via plain string substitution to keep each
+/// test's YAML readable at the call site.
+///
+/// `lo` is declared `unique` here to exercise D03 distinctness on a slot
+/// bound — the declaration is honest (slot edges are `nth(3i)`, distinct by
+/// construction). It is *not* required: as of the S06 range-join fix, a
+/// range join needs no unique/`primary_key` bound at all (disjoint slots
+/// give the at-most-one guarantee), which
+/// [`many_to_one_range_join_with_non_unique_bound_validates`] pins down.
+/// Some one-to-one tests also mark the probe column via `at_constraints`.
+fn range_dict(
+    extra_windows: &str,
+    extra_events: &str,
+    at_constraints: &str,
+    join: &str,
+    cardinality: &str,
+) -> String {
+    format!(
+        r#"$version: "0.2.0"
+$learn_more: https://github.com/pjc-wspace/dbdict
+source:
+  duckdb:
+    file: data.duckdb
+tables:
+  - name: windows
+    columns:
+      - name: id
+        type: INTEGER
+        constraints: [primary_key]
+      - name: lo
+        type: TIMESTAMP
+        constraints: [unique]
+      - name: hi
+        type: TIMESTAMP
+{extra_windows}  - name: events
+    columns:
+      - name: id
+        type: INTEGER
+        constraints: [primary_key]
+      - name: at
+        type: TIMESTAMP
+{at_constraints}{extra_events}relationships:
+  - join: {join}
+    cardinality: {cardinality}
+"#
+    )
+}
+
+/// Generate, write, and run the shipped validators — the shared happy-path
+/// tail of every range-join oracle test.
+fn assert_validates(dict_path: &std::path::Path, dict: &dbdict::model::DataDict) {
+    let generated = generate(dict, &GenerateOptions::default()).expect("generates");
+    generated
+        .write_db(&dict_path.parent().unwrap().join("data.duckdb"))
+        .expect("writes");
+    let problems = validate_data(dict_path, None, &NativeDuckdb);
+    assert_eq!(
+        problems.status(),
+        Status::Ok,
+        "generated database must pass validate-data:\n{}",
+        problems.render().join("\n")
+    );
+}
+
+#[test]
+fn many_to_one_range_join_passes_validate_data() {
+    // the motivating D05 case: each event lands inside exactly one window
+    let yaml = range_dict(
+        "",
+        "",
+        "",
+        "events.at >= windows.lo AND events.at <= windows.hi",
+        "many-to-one",
+    );
+    let dict_path = fixture(&yaml);
+    let dict = load(&dict_path);
+    assert_validates(&dict_path, &dict);
+}
+
+#[test]
+fn many_to_one_range_join_with_non_unique_bound_validates() {
+    // the S06 fix in action end-to-end: neither bound column is unique or a
+    // primary key, yet the dict validates (S06 exempts range joins) and the
+    // generated database passes validate-data — disjoint slots satisfy D05
+    // without any declared uniqueness
+    let dict_path = fixture(indoc! {r#"
+        $version: "0.2.0"
+        $learn_more: https://github.com/pjc-wspace/dbdict
+        source:
+          duckdb:
+            file: data.duckdb
+        tables:
+          - name: windows
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: lo
+                type: TIMESTAMP
+              - name: hi
+                type: TIMESTAMP
+          - name: events
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: at
+                type: TIMESTAMP
+        relationships:
+          - join: events.at >= windows.lo AND events.at <= windows.hi
+            cardinality: many-to-one
+    "#});
+    let dict = load(&dict_path);
+    assert_validates(&dict_path, &dict);
+}
+
+#[test]
+fn one_to_one_range_join_passes_validate_data() {
+    // one-to-one is probed in both directions by D05: event i must own
+    // window i exclusively (identity slot-owner draw)
+    let yaml = range_dict(
+        "",
+        "",
+        "        constraints: [unique]\n",
+        "events.at >= windows.lo AND events.at <= windows.hi",
+        "one-to-one",
+    );
+    let dict_path = fixture(&yaml);
+    let dict = load(&dict_path);
+    assert_validates(&dict_path, &dict);
+}
+
+#[test]
+fn open_gt_lt_bounds_pass_validate_data() {
+    // stride 3 exists exactly for this: the probe value sits strictly
+    // between the slot edges, so open bounds match too
+    let yaml = range_dict(
+        "",
+        "",
+        "",
+        "events.at > windows.lo AND events.at < windows.hi",
+        "many-to-one",
+    );
+    let dict_path = fixture(&yaml);
+    let dict = load(&dict_path);
+    assert_validates(&dict_path, &dict);
+}
+
+#[test]
+fn eq_conjunct_with_plain_fill_source_passes_validate_data() {
+    // events.device copies the slot owner's plain-fill value, so the eq
+    // conjunct agrees with the range conjuncts about which window matches
+    let yaml = range_dict(
+        "      - name: device\n        type: INTEGER\n",
+        "      - name: device\n        type: INTEGER\n",
+        "",
+        "events.at >= windows.lo AND events.at <= windows.hi \
+         AND events.device = windows.device",
+        "many-to-one",
+    );
+    let dict_path = fixture(&yaml);
+    let dict = load(&dict_path);
+    assert_validates(&dict_path, &dict);
+}
+
+#[test]
+fn unique_eq_copy_on_one_to_one_passes_validate_data() {
+    // the sharp edge: a *unique* copy column only stays distinct if the
+    // copy draws the same owner as the probe (identity on one-to-one) and
+    // the source is itself unique. a wrong owner draw would not break D05
+    // (zero matches are legal) — it breaks D03, which is what this test
+    // pins down
+    let yaml = range_dict(
+        "      - name: device\n        type: INTEGER\n        constraints: [unique]\n",
+        "      - name: device\n        type: INTEGER\n        constraints: [unique]\n",
+        "",
+        "events.at >= windows.lo AND events.at <= windows.hi \
+         AND events.device = windows.device",
+        "one-to-one",
+    );
+    let dict_path = fixture(&yaml);
+    let dict = load(&dict_path);
+    assert_validates(&dict_path, &dict);
+}
+
 #[test]
 fn same_seed_is_byte_identical_and_different_seed_differs() {
     let dict_path = fixture(RICH_DICT);
@@ -319,6 +506,367 @@ fn unique_enum_with_more_rows_than_variants_is_refused() {
                 capacity: 2,
                 rows: 10,
             } if table == "t" && column == "flag"
+        ),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn non_orderable_range_column_is_refused() {
+    // MAP values generate fine for unique/fk columns (injective), but nth
+    // is not monotone for them — slots would not be ordered intervals
+    let dict_path = fixture(indoc! {r#"
+        $version: "0.2.0"
+        $learn_more: https://github.com/pjc-wspace/dbdict
+        source:
+          duckdb:
+            file: data.duckdb
+        tables:
+          - name: windows
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: lo
+                type: MAP(VARCHAR, INTEGER)
+                constraints: [unique]
+              - name: hi
+                type: MAP(VARCHAR, INTEGER)
+          - name: events
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: at
+                type: MAP(VARCHAR, INTEGER)
+        relationships:
+          - join: events.at >= windows.lo AND events.at <= windows.hi
+            cardinality: many-to-one
+    "#});
+    let dict = load(&dict_path);
+    let err = generate(&dict, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            GenerateError::RangeUnsupported {
+                ref table,
+                ref column,
+                ref reason,
+            } if table == "windows" && column == "lo" && reason.contains("orderable")
+        ),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn mismatched_range_column_types_are_refused() {
+    // DATE probe against TIMESTAMP bounds: each type's nth sequence is
+    // monotone on its own, but index arithmetic across two different
+    // sequences proves nothing about containment
+    let dict_path = fixture(indoc! {r#"
+        $version: "0.2.0"
+        $learn_more: https://github.com/pjc-wspace/dbdict
+        source:
+          duckdb:
+            file: data.duckdb
+        tables:
+          - name: windows
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: lo
+                type: TIMESTAMP
+                constraints: [unique]
+              - name: hi
+                type: TIMESTAMP
+          - name: events
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: at
+                type: DATE
+        relationships:
+          - join: events.at >= windows.lo AND events.at <= windows.hi
+            cardinality: many-to-one
+    "#});
+    let dict = load(&dict_path);
+    let err = generate(&dict, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            GenerateError::RangeUnsupported {
+                ref table,
+                ref column,
+                ..
+            } if table == "events" && column == "at"
+        ),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn eq_copy_type_mismatch_with_its_source_is_refused() {
+    // the copy renders the source's literal — under a different column
+    // type the stored value could silently diverge, so refuse instead
+    let dict_path = fixture(indoc! {r#"
+        $version: "0.2.0"
+        $learn_more: https://github.com/pjc-wspace/dbdict
+        source:
+          duckdb:
+            file: data.duckdb
+        tables:
+          - name: windows
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: lo
+                type: TIMESTAMP
+                constraints: [unique]
+              - name: hi
+                type: TIMESTAMP
+              - name: device
+                type: INTEGER
+          - name: events
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: at
+                type: TIMESTAMP
+              - name: device
+                type: VARCHAR
+        relationships:
+          - join: events.at >= windows.lo AND events.at <= windows.hi
+              AND events.device = windows.device
+            cardinality: many-to-one
+    "#});
+    let dict = load(&dict_path);
+    let err = generate(&dict, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            GenerateError::RangeUnsupported {
+                ref table,
+                ref column,
+                ..
+            } if table == "events" && column == "device"
+        ),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn eq_copy_from_an_untyped_source_is_refused() {
+    // an untyped column never reaches the DDL or the INSERTs, so there is
+    // no stored value to copy — refuse descriptively rather than panic
+    let dict_path = fixture(indoc! {r#"
+        $version: "0.2.0"
+        $learn_more: https://github.com/pjc-wspace/dbdict
+        source:
+          duckdb:
+            file: data.duckdb
+        tables:
+          - name: windows
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: lo
+                type: TIMESTAMP
+                constraints: [unique]
+              - name: hi
+                type: TIMESTAMP
+              - name: device
+          - name: events
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: at
+                type: TIMESTAMP
+              - name: device
+                type: INTEGER
+        relationships:
+          - join: events.at >= windows.lo AND events.at <= windows.hi
+              AND events.device = windows.device
+            cardinality: many-to-one
+    "#});
+    let dict = load(&dict_path);
+    let err = generate(&dict, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            GenerateError::RangeUnsupported {
+                ref table,
+                ref column,
+                ..
+            } if table == "events" && column == "device"
+        ),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn range_slots_exceeding_type_capacity_are_refused() {
+    // nth uses TINYINT's non-negative half (128 values); 100 one-side
+    // rows need 300 slot values (3 per row) — refused up front,
+    // mirroring the unique-capacity check
+    let dict_path = fixture(indoc! {r#"
+        $version: "0.2.0"
+        $learn_more: https://github.com/pjc-wspace/dbdict
+        source:
+          duckdb:
+            file: data.duckdb
+        tables:
+          - name: windows
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: lo
+                type: TINYINT
+                constraints: [unique]
+              - name: hi
+                type: TINYINT
+          - name: events
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: at
+                type: TINYINT
+        relationships:
+          - join: events.at >= windows.lo AND events.at <= windows.hi
+            cardinality: many-to-one
+    "#});
+    let dict = load(&dict_path);
+    let opts = GenerateOptions {
+        table_rows: std::collections::HashMap::from([("windows".to_string(), 100)]),
+        ..GenerateOptions::default()
+    };
+    let err = generate(&dict, &opts).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            GenerateError::RangeCapacityTooSmall {
+                ref table,
+                ref column,
+                capacity: 128,
+                rows: 100,
+            } if table == "windows" && column == "lo"
+        ),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn eq_copy_from_a_non_recomputable_source_is_refused() {
+    // the eq source (windows.code) is a plain foreign key, so its value is a
+    // seed-dependent draw the copy cannot reproduce by index alone. refuse
+    // up front with an actionable message rather than dying mid-generation
+    // with an internal error
+    let dict_path = fixture(indoc! {r#"
+        $version: "0.2.0"
+        $learn_more: https://github.com/pjc-wspace/dbdict
+        source:
+          duckdb:
+            file: data.duckdb
+        tables:
+          - name: other
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+          - name: windows
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: lo
+                type: INTEGER
+                constraints: [unique]
+              - name: hi
+                type: INTEGER
+              - name: code
+                type: INTEGER
+                constraints: [foreign_key]
+          - name: events
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: at
+                type: INTEGER
+              - name: wcode
+                type: INTEGER
+        relationships:
+          - join: events.at >= windows.lo AND events.at <= windows.hi
+              AND events.wcode = windows.code
+            cardinality: many-to-one
+          - join: windows.code = other.id
+            cardinality: many-to-one
+    "#});
+    let dict = load(&dict_path);
+    let err = generate(&dict, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            GenerateError::RangeUnsupported {
+                ref table,
+                ref column,
+                ..
+            } if table == "events" && column == "wcode"
+        ),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn untyped_range_bound_column_is_refused() {
+    // a slot bound with no declared type would be dropped from the DDL and
+    // the inserts, leaving the join to reference a column that does not
+    // exist — refuse cleanly instead of emitting a database the oracle
+    // cannot check
+    let dict_path = fixture(indoc! {r#"
+        $version: "0.2.0"
+        $learn_more: https://github.com/pjc-wspace/dbdict
+        source:
+          duckdb:
+            file: data.duckdb
+        tables:
+          - name: windows
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: lo
+                constraints: [unique]
+              - name: hi
+                type: INTEGER
+          - name: events
+            columns:
+              - name: id
+                type: INTEGER
+                constraints: [primary_key]
+              - name: at
+                type: INTEGER
+        relationships:
+          - join: events.at >= windows.lo AND events.at <= windows.hi
+            cardinality: many-to-one
+    "#});
+    let dict = load(&dict_path);
+    let err = generate(&dict, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            GenerateError::RangeUnsupported {
+                ref table,
+                ref column,
+                ..
+            } if table == "windows" && column == "lo"
         ),
         "got: {err:?}"
     );

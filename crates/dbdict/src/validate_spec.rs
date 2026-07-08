@@ -20,7 +20,7 @@ use quarto_yaml::YamlWithSourceInfo;
 use quarto_yaml_validation::error::ValidationErrorKind;
 use quarto_yaml_validation::{Schema, SchemaRegistry, ValidationDiagnostic, ValidationError};
 
-use crate::join_expr::{JoinExpr, QCol};
+use crate::join_expr::{JoinOp, OrientedConjunct};
 use crate::model::{Cardinality, Column, DataDict, Format, Scalar, Spanned, Table};
 use crate::problem::{Problem, ProblemKind, ProblemSet, Suggestion, subspan};
 use crate::{SourceContext, lower};
@@ -446,29 +446,32 @@ fn validate_s06_cardinality_consistency(dict: &DataDict, out: &mut ProblemSet) {
             continue;
         }
 
-        // The cardinality rule is defined in terms of the LHS and RHS tables
-        // of the join. With multi-conjunct joins (date-range overlap), the
-        // LHS and RHS tables are the same across all conjuncts, so we can
-        // use the first conjunct as the canonical orientation.
-        let Some(first) = join.conjuncts.first() else {
+        // A range join (any non-equality conjunct) guarantees "at most one
+        // match" through disjoint intervals, not through a unique column. That
+        // is a property of the *data* — the D05 data validator checks it at
+        // validate-data time — not of the schema, so the unique/primary_key
+        // requirement below (right for equality joins) does not apply. A
+        // unique bound would be neither necessary (disjoint intervals suffice)
+        // nor sufficient (overlapping unique-bounded windows still fail D05),
+        // so demanding one here would only mislead. Skip range joins entirely.
+        if join.conjuncts.iter().any(|c| c.op != JoinOp::Eq) {
             continue;
-        };
-        let lhs_table = first.lhs.table.clone();
-        let rhs_table = first.rhs.table.clone();
+        }
 
-        // Which columns are "the join side" for each table?  For the
-        // single-conjunct equality case this is straightforward. For
-        // multi-conjunct (range) joins we require ALL conjunct columns on the
-        // "one" side to be jointly unique-implied — in practice users
-        // typically mark just one of them as PK/unique. We err on the
-        // permissive side and check whether *any* column on the "one" side
-        // is unique-implied; that matches the loose intuition behind range
-        // joins without producing noise for legitimate overlap joins.
-
+        // Orientation comes from the shared helper so this check, the D05 data
+        // validator, and the dummy-data planner cannot disagree about which
+        // side is which. `sides(true)` reads the first conjunct positionally
+        // as (left, right); `oriented(true)` canonicalizes every conjunct to
+        // that orientation (reversed writing, case-folded table names,
+        // self-joins), fixing drift the old per-conjunct `!=` compare had.
+        let (lhs_table, rhs_table) = join.sides(true);
+        let oriented = join.oriented(true);
+        // in oriented(true) each conjunct's `probe` is its left column and
+        // `other` its right column
         let lhs_cols_unique =
-            side_has_unique_implied(dict, &lhs_table, join, /* use_lhs = */ true);
+            oriented_side_has_unique(dict, &oriented, /* use_other = */ false);
         let rhs_cols_unique =
-            side_has_unique_implied(dict, &rhs_table, join, /* use_lhs = */ false);
+            oriented_side_has_unique(dict, &oriented, /* use_other = */ true);
 
         let card_span = rel.cardinality.span.clone();
         match rel.cardinality.value {
@@ -478,8 +481,7 @@ fn validate_s06_cardinality_consistency(dict: &DataDict, out: &mut ProblemSet) {
                         "S06",
                         "A `one-to-one` join must have `primary_key` or `unique` columns on both sides.",
                         format!(
-                            "the join columns on `{}` or `{}` are not marked `primary_key` or `unique`",
-                            lhs_table, rhs_table
+                            "the join columns on `{lhs_table}` or `{rhs_table}` are not marked `primary_key` or `unique`"
                         ),
                         [
                             rel.join_text.span.clone(),
@@ -496,8 +498,7 @@ fn validate_s06_cardinality_consistency(dict: &DataDict, out: &mut ProblemSet) {
                         "S06",
                         "A `one-to-many` join must have a `primary_key` or `unique` column on its left (\"one\") side.",
                         format!(
-                            "the left-side join column on `{}` is not marked `primary_key` or `unique`",
-                            lhs_table
+                            "the left-side join column on `{lhs_table}` is not marked `primary_key` or `unique`"
                         ),
                         [
                             rel.join_text.span.clone(),
@@ -512,8 +513,7 @@ fn validate_s06_cardinality_consistency(dict: &DataDict, out: &mut ProblemSet) {
                         "S06",
                         "A `many-to-one` join must have a `primary_key` or `unique` column on its right (\"one\") side.",
                         format!(
-                            "the right-side join column on `{}` is not marked `primary_key` or `unique`",
-                            rhs_table
+                            "the right-side join column on `{rhs_table}` is not marked `primary_key` or `unique`"
                         ),
                         [
                             rel.join_text.span.clone(),
@@ -526,22 +526,19 @@ fn validate_s06_cardinality_consistency(dict: &DataDict, out: &mut ProblemSet) {
     }
 }
 
-fn side_has_unique_implied(
+/// Whether any conjunct's chosen side (`other` for the right/one side of the
+/// canonical orientation, `probe` for the left) carries a `primary_key`/
+/// `unique` column. Consumes the shared [`OrientedConjunct`]s so a self-join
+/// still distinguishes its two sides positionally.
+fn oriented_side_has_unique(
     dict: &DataDict,
-    table_name: &str,
-    join: &JoinExpr,
-    use_lhs: bool,
+    conjuncts: &[OrientedConjunct],
+    use_other: bool,
 ) -> bool {
-    let Some(table) = dict.table(table_name) else {
-        return false;
-    };
-    join.conjuncts.iter().any(|conj| {
-        let q: &QCol = if use_lhs { &conj.lhs } else { &conj.rhs };
-        if q.table != table_name {
-            return false;
-        }
-        table
-            .column(&q.column)
+    conjuncts.iter().any(|oc| {
+        let q = if use_other { oc.other } else { oc.probe };
+        dict.table(&q.table)
+            .and_then(|t| t.column(&q.column))
             .is_some_and(|c| c.is_unique_implied())
     })
 }

@@ -398,35 +398,23 @@ fn check_relationships_data(
     for rel in &dict.relationships {
         // a join that failed to parse has its S04; nothing to evaluate
         let Some(join) = &rel.join else { continue };
-        let Some(first) = join.conjuncts.first() else {
-            continue;
-        };
-        // canonical orientation comes from the first conjunct, as S06 reads
-        // it; later conjuncts may be written either way round and are
-        // normalized against it below
-        let left_table = &first.lhs.table;
-        let right_table = &first.rhs.table;
+        if join.conjuncts.is_empty() {
+            continue; // the parser never produces an empty join
+        }
+        // canonical orientation comes from the first conjunct, as S06
+        // reads it — owned by JoinExpr::oriented, which the dummy-data
+        // planner reads too, so the two cannot drift apart
+        let (left_table, right_table) = join.sides(true);
         // under --table, a relationship is in scope if it touches the
         // selected table on either side
         if !(table_selected(table_filter, left_table) || table_selected(table_filter, right_table))
         {
             continue;
         }
-        // which direction(s) the declared cardinality bounds. probing a
-        // table counts its rows matching more than one row of the other
-        // side, so the probed side is the "many" side; one-to-one bounds
-        // both directions and each is checked (and reported) independently
-        let probe_left_directions: &[bool] = match rel.cardinality.value {
-            Cardinality::ManyToOne => &[true],
-            Cardinality::OneToMany => &[false],
-            Cardinality::OneToOne => &[true, false],
-        };
-        for &probe_left in probe_left_directions {
-            let (probe_name, other_name) = if probe_left {
-                (left_table, right_table)
-            } else {
-                (right_table, left_table)
-            };
+        // one-to-one bounds both directions and each is checked (and
+        // reported) independently
+        for &probe_left in rel.cardinality.value.probe_left_directions() {
+            let (probe_name, other_name) = join.sides(probe_left);
             // both tables must be reachable in the database: an absent one
             // already has its M06 — skip rather than pile a failure on top
             let Some(probe_db) = actual.iter().find(|a| names_eq(&a.name, probe_name)) else {
@@ -435,38 +423,22 @@ fn check_relationships_data(
             let Some(other_db) = actual.iter().find(|a| names_eq(&a.name, other_name)) else {
                 continue;
             };
-            // orient every conjunct probe-side first, in db spellings. a
-            // missing column already has its M02 — skip the direction whole
+            // map each oriented conjunct (probe-side first, dictionary
+            // spellings) to db spellings for the backend query. a missing
+            // column already has its M02 — skip the direction whole
             let mut conjuncts = Vec::new();
             let mut columns_present = true;
-            for conj in &join.conjuncts {
-                // canonicalize first: lhs on the join's left table. a
-                // conjunct written right-to-left is the same predicate with
-                // the operator mirrored (`a >= b` ⇔ `b <= a`). a self-join
-                // is always canonical — both sides name the same table, so
-                // orientation is positional
-                let (lhs, op, rhs) = if names_eq(&conj.lhs.table, left_table) {
-                    (&conj.lhs, conj.op, &conj.rhs)
-                } else {
-                    (&conj.rhs, flip_op(conj.op), &conj.lhs)
-                };
-                // then orient for the probe: probing the right side mirrors
-                // the operator again so it still reads probe-side first
-                let (probe_col, op, other_col) = if probe_left {
-                    (&lhs.column, op, &rhs.column)
-                } else {
-                    (&rhs.column, flip_op(op), &lhs.column)
-                };
+            for oc in join.oriented(probe_left) {
                 let (Some(probe_db_col), Some(other_db_col)) = (
-                    db_column_in(probe_db, probe_col),
-                    db_column_in(other_db, other_col),
+                    db_column_in(probe_db, &oc.probe.column),
+                    db_column_in(other_db, &oc.other.column),
                 ) else {
                     columns_present = false;
                     break;
                 };
                 conjuncts.push(OrientedConjunct {
                     probe_column: probe_db_col.to_string(),
-                    op,
+                    op: oc.op,
                     other_column: other_db_col.to_string(),
                 });
             }
@@ -518,18 +490,6 @@ fn db_column_in<'a>(table: &'a TableSchema, dict_name: &str) -> Option<&'a str> 
         .iter()
         .map(|(db_name, _)| db_name.as_str())
         .find(|db_name| names_eq(dict_name, db_name))
-}
-
-/// Mirror a comparison so its operands can swap sides: `a >= b` and
-/// `b <= a` are the same predicate. Equality is its own mirror.
-fn flip_op(op: JoinOp) -> JoinOp {
-    match op {
-        JoinOp::Eq => JoinOp::Eq,
-        JoinOp::Ge => JoinOp::Le,
-        JoinOp::Le => JoinOp::Ge,
-        JoinOp::Gt => JoinOp::Lt,
-        JoinOp::Lt => JoinOp::Gt,
-    }
 }
 
 /// The `cardinality` keyword as the dictionary spells it, for messages.

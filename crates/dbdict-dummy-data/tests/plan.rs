@@ -11,7 +11,7 @@ use dbdict::join_expr::JoinExpr;
 use dbdict::model::{
     Cardinality, Column, Constraint, DataDict, Format, Relationship, Spanned, Table,
 };
-use dbdict_dummy_data::{DummyDataError, GenerateOptions, Role, plan};
+use dbdict_dummy_data::{DummyDataError, GenerateOptions, RangeBoundKind, Role, plan};
 use quarto_source_map::SourceInfo;
 
 fn spanned<T>(value: T) -> Spanned<T> {
@@ -446,8 +446,499 @@ fn one_to_one_requires_both_sides_unique() {
     );
 }
 
+/// events probing windows' [lo, hi] slots: the motivating range join.
+/// windows deliberately has NO unique column — for a supported range join,
+/// disjoint slots alone satisfy d05
+fn events_windows(cardinality: Cardinality, join: &str) -> DataDict {
+    dict(
+        vec![
+            table(
+                "events",
+                vec![
+                    column("id", "INTEGER", &[Constraint::PrimaryKey]),
+                    column("ts", "INTEGER", &[]),
+                ],
+            ),
+            table(
+                "windows",
+                vec![column("lo", "INTEGER", &[]), column("hi", "INTEGER", &[])],
+            ),
+        ],
+        vec![relationship(cardinality, join)],
+    )
+}
+
 #[test]
-fn range_join_is_refused_until_phase_5() {
+fn many_to_one_range_join_assigns_slot_roles() {
+    let d = events_windows(
+        Cardinality::ManyToOne,
+        "events.ts >= windows.lo AND events.ts <= windows.hi",
+    );
+    let p = plan(&d, &GenerateOptions::default()).expect("plans");
+    let events = p.tables.iter().find(|t| t.table == "events").unwrap();
+    assert_eq!(events.columns[1].column, "ts");
+    assert_eq!(
+        events.columns[1].role,
+        Role::RangeProbe {
+            rel: 0,
+            one_table: "windows".to_string(),
+            injective: false,
+        }
+    );
+    let windows = p.tables.iter().find(|t| t.table == "windows").unwrap();
+    assert_eq!(
+        windows.columns[0].role,
+        Role::RangeBound {
+            rel: 0,
+            kind: RangeBoundKind::Lower,
+        }
+    );
+    assert_eq!(
+        windows.columns[1].role,
+        Role::RangeBound {
+            rel: 0,
+            kind: RangeBoundKind::Upper,
+        }
+    );
+}
+
+#[test]
+fn range_role_columns_are_never_nullable() {
+    // ts, lo, hi are all optional by declaration, but slots must exist:
+    // the null-fraction option may not blank them
+    let d = events_windows(
+        Cardinality::ManyToOne,
+        "events.ts >= windows.lo AND events.ts <= windows.hi",
+    );
+    let p = plan(&d, &GenerateOptions::default()).expect("plans");
+    for t in &p.tables {
+        for col in &t.columns {
+            if col.column != "note" && col.column != "id" {
+                assert!(
+                    !col.nullable,
+                    "{}.{} must not be nullable",
+                    t.table, col.column
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn open_bound_operators_also_plan() {
+    // with stride-3 slots the probe value sits strictly inside, so open
+    // (`>`/`<`) bounds are satisfiable exactly like closed ones
+    let d = events_windows(
+        Cardinality::ManyToOne,
+        "events.ts > windows.lo AND events.ts < windows.hi",
+    );
+    let p = plan(&d, &GenerateOptions::default()).expect("plans");
+    let windows = p.tables.iter().find(|t| t.table == "windows").unwrap();
+    assert_eq!(
+        windows.columns[0].role,
+        Role::RangeBound {
+            rel: 0,
+            kind: RangeBoundKind::Lower,
+        }
+    );
+    assert_eq!(
+        windows.columns[1].role,
+        Role::RangeBound {
+            rel: 0,
+            kind: RangeBoundKind::Upper,
+        }
+    );
+}
+
+#[test]
+fn conjunct_written_the_other_way_round_orients_the_same() {
+    // `windows.hi >= events.ts` is the same predicate as
+    // `events.ts <= windows.hi` — the first conjunct fixes which side is
+    // left, later ones canonicalize against it
+    let d = events_windows(
+        Cardinality::ManyToOne,
+        "events.ts >= windows.lo AND windows.hi >= events.ts",
+    );
+    let p = plan(&d, &GenerateOptions::default()).expect("plans");
+    let windows = p.tables.iter().find(|t| t.table == "windows").unwrap();
+    assert_eq!(
+        windows.columns[1].role,
+        Role::RangeBound {
+            rel: 0,
+            kind: RangeBoundKind::Upper,
+        }
+    );
+}
+
+#[test]
+fn one_to_one_range_join_draws_injectively() {
+    let d = events_windows(
+        Cardinality::OneToOne,
+        "events.ts >= windows.lo AND events.ts <= windows.hi",
+    );
+    let p = plan(&d, &GenerateOptions::default()).expect("plans");
+    let events = p.tables.iter().find(|t| t.table == "events").unwrap();
+    assert_eq!(
+        events.columns[1].role,
+        Role::RangeProbe {
+            rel: 0,
+            one_table: "windows".to_string(),
+            injective: true,
+        }
+    );
+}
+
+#[test]
+fn one_to_one_range_join_accepts_bounds_written_first() {
+    // one-to-one is direction-symmetric: either side may be probed. when the
+    // bound (slot) table is written on the first conjunct's left, the planner
+    // must try the other direction rather than refuse — the same join with
+    // the probe table first plans fine, and writing order is arbitrary here
+    let d = events_windows(
+        Cardinality::OneToOne,
+        "windows.lo <= events.ts AND windows.hi >= events.ts",
+    );
+    let p = plan(&d, &GenerateOptions::default()).expect("plans");
+    let events = p.tables.iter().find(|t| t.table == "events").unwrap();
+    assert_eq!(
+        events.columns[1].role,
+        Role::RangeProbe {
+            rel: 0,
+            one_table: "windows".to_string(),
+            injective: true,
+        }
+    );
+    let windows = p.tables.iter().find(|t| t.table == "windows").unwrap();
+    assert_eq!(
+        windows.columns[0].role,
+        Role::RangeBound {
+            rel: 0,
+            kind: RangeBoundKind::Lower,
+        }
+    );
+}
+
+#[test]
+fn one_to_many_probes_the_right_side() {
+    // one-to-many declares the LEFT side (windows) the "one" side, so
+    // generation probes the right side (events)
+    let d = events_windows(
+        Cardinality::OneToMany,
+        "windows.lo <= events.ts AND windows.hi >= events.ts",
+    );
+    let p = plan(&d, &GenerateOptions::default()).expect("plans");
+    let events = p.tables.iter().find(|t| t.table == "events").unwrap();
+    assert_eq!(
+        events.columns[1].role,
+        Role::RangeProbe {
+            rel: 0,
+            one_table: "windows".to_string(),
+            injective: false,
+        }
+    );
+    let windows = p.tables.iter().find(|t| t.table == "windows").unwrap();
+    assert_eq!(
+        windows.columns[0].role,
+        Role::RangeBound {
+            rel: 0,
+            kind: RangeBoundKind::Lower,
+        }
+    );
+}
+
+#[test]
+fn eq_conjunct_alongside_a_range_becomes_a_slot_copy() {
+    // events.wid must equal the slot owner's id: the eq conjunct picks out
+    // the same windows row the range conjuncts land in. windows.id needs
+    // no uniqueness — the disjoint slots already decide the match
+    let d = dict(
+        vec![
+            table(
+                "events",
+                vec![column("ts", "INTEGER", &[]), column("wid", "INTEGER", &[])],
+            ),
+            table(
+                "windows",
+                vec![
+                    column("id", "INTEGER", &[]),
+                    column("lo", "INTEGER", &[]),
+                    column("hi", "INTEGER", &[]),
+                ],
+            ),
+        ],
+        vec![relationship(
+            Cardinality::ManyToOne,
+            "events.ts >= windows.lo AND events.ts <= windows.hi AND events.wid = windows.id",
+        )],
+    );
+    let p = plan(&d, &GenerateOptions::default()).expect("plans");
+    let events = p.tables.iter().find(|t| t.table == "events").unwrap();
+    assert_eq!(events.columns[1].column, "wid");
+    assert_eq!(
+        events.columns[1].role,
+        Role::SlotEqCopy {
+            rel: 0,
+            one_table: "windows".to_string(),
+            one_column: "id".to_string(),
+            injective: false,
+        }
+    );
+    assert!(!events.columns[1].nullable);
+}
+
+#[test]
+fn range_bound_column_that_is_also_foreign_key_is_refused() {
+    // windows.lo would need slot-edge values AND values drawn from a
+    // primary key — it cannot satisfy both
+    let d = dict(
+        vec![
+            table("events", vec![column("ts", "INTEGER", &[])]),
+            table(
+                "windows",
+                vec![
+                    column("lo", "INTEGER", &[Constraint::ForeignKey]),
+                    column("hi", "INTEGER", &[]),
+                ],
+            ),
+        ],
+        vec![relationship(
+            Cardinality::ManyToOne,
+            "events.ts >= windows.lo AND events.ts <= windows.hi",
+        )],
+    );
+    let err = plan(&d, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeColumnIsForeignKey { ref table, ref column, .. }
+            if table == "windows" && column == "lo"),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn range_probe_column_that_is_also_foreign_key_is_refused() {
+    let d = dict(
+        vec![
+            table(
+                "events",
+                vec![column("ts", "INTEGER", &[Constraint::ForeignKey])],
+            ),
+            table(
+                "windows",
+                vec![column("lo", "INTEGER", &[]), column("hi", "INTEGER", &[])],
+            ),
+        ],
+        vec![relationship(
+            Cardinality::ManyToOne,
+            "events.ts >= windows.lo AND events.ts <= windows.hi",
+        )],
+    );
+    let err = plan(&d, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeColumnIsForeignKey { ref table, ref column, .. }
+            if table == "events" && column == "ts"),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn unique_probe_column_on_a_many_to_one_range_join_is_refused() {
+    // two events rows drawing the same slot owner get the same probe
+    // value, which a unique declaration forbids
+    let d = dict(
+        vec![
+            table(
+                "events",
+                vec![column("ts", "INTEGER", &[Constraint::Unique])],
+            ),
+            table(
+                "windows",
+                vec![column("lo", "INTEGER", &[]), column("hi", "INTEGER", &[])],
+            ),
+        ],
+        vec![relationship(
+            Cardinality::ManyToOne,
+            "events.ts >= windows.lo AND events.ts <= windows.hi",
+        )],
+    );
+    let err = plan(&d, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeColumnCannotBeUnique { ref table, ref column, .. }
+            if table == "events" && column == "ts"),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn unique_probe_column_on_a_one_to_one_range_join_is_accepted() {
+    // guard: the injective draw hands every probe row its own slot, so
+    // probe values stay distinct and a unique declaration is satisfiable
+    let d = dict(
+        vec![
+            table(
+                "events",
+                vec![column("ts", "INTEGER", &[Constraint::Unique])],
+            ),
+            table(
+                "windows",
+                vec![column("lo", "INTEGER", &[]), column("hi", "INTEGER", &[])],
+            ),
+        ],
+        vec![relationship(
+            Cardinality::OneToOne,
+            "events.ts >= windows.lo AND events.ts <= windows.hi",
+        )],
+    );
+    plan(&d, &GenerateOptions::default()).expect("unique probe is fine when injective");
+}
+
+/// events copy windows.id alongside the [lo, hi] range; constraints on
+/// wid/id vary per test
+fn slot_copy_dict(
+    cardinality: Cardinality,
+    wid_constraints: &[Constraint],
+    id_constraints: &[Constraint],
+) -> DataDict {
+    dict(
+        vec![
+            table(
+                "events",
+                vec![
+                    column("ts", "INTEGER", &[]),
+                    column("wid", "INTEGER", wid_constraints),
+                ],
+            ),
+            table(
+                "windows",
+                vec![
+                    column("id", "INTEGER", id_constraints),
+                    column("lo", "INTEGER", &[]),
+                    column("hi", "INTEGER", &[]),
+                ],
+            ),
+        ],
+        vec![relationship(
+            cardinality,
+            "events.ts >= windows.lo AND events.ts <= windows.hi AND events.wid = windows.id",
+        )],
+    )
+}
+
+#[test]
+fn unique_slot_copy_column_on_a_many_to_one_range_join_is_refused() {
+    let d = slot_copy_dict(Cardinality::ManyToOne, &[Constraint::Unique], &[]);
+    let err = plan(&d, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeColumnCannotBeUnique { ref table, ref column, .. }
+            if table == "events" && column == "wid"),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn unique_slot_copy_from_a_non_unique_source_is_refused_even_when_injective() {
+    // one-to-one hands out distinct owners, but the copied values are only
+    // distinct if the source column's values are — windows.id is plain
+    // fill here, so copies can collide
+    let d = slot_copy_dict(Cardinality::OneToOne, &[Constraint::Unique], &[]);
+    let err = plan(&d, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeColumnCannotBeUnique { ref table, ref column, .. }
+            if table == "events" && column == "wid"),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn unique_slot_copy_from_a_unique_source_is_accepted_when_injective() {
+    // guard: distinct owners + distinct source values = distinct copies
+    let d = slot_copy_dict(
+        Cardinality::OneToOne,
+        &[Constraint::Unique],
+        &[Constraint::Unique],
+    );
+    plan(&d, &GenerateOptions::default())
+        .expect("unique copy from a unique source is fine when injective");
+}
+
+#[test]
+fn one_to_one_range_probe_with_too_few_one_side_rows_is_refused() {
+    // 5 probe rows each need their own slot, but only 3 slots exist
+    let d = events_windows(
+        Cardinality::OneToOne,
+        "events.ts >= windows.lo AND events.ts <= windows.hi",
+    );
+    let opts = GenerateOptions {
+        table_rows: HashMap::from([("events".to_string(), 5), ("windows".to_string(), 3)]),
+        ..GenerateOptions::default()
+    };
+    let err = plan(&d, &opts).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeProbeExceedsOneSide { ref table, ref column, rows, ref one_table, one_rows }
+            if table == "events" && column == "ts" && rows == 5
+                && one_table == "windows" && one_rows == 3),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn range_probe_into_a_zero_row_one_side_is_refused() {
+    // no slot owners exist at all, and range columns may not go NULL
+    let d = events_windows(
+        Cardinality::ManyToOne,
+        "events.ts >= windows.lo AND events.ts <= windows.hi",
+    );
+    let opts = GenerateOptions {
+        table_rows: HashMap::from([("windows".to_string(), 0)]),
+        ..GenerateOptions::default()
+    };
+    let err = plan(&d, &opts).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeProbeExceedsOneSide { ref table, ref column, one_rows, .. }
+            if table == "events" && column == "ts" && one_rows == 0),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn column_claimed_by_two_range_relationships_is_refused() {
+    // both relationships want windows.lo as a slot edge, salted by their
+    // own rel — the column can only hold one relationship's values
+    let d = dict(
+        vec![
+            table("e1", vec![column("ts", "INTEGER", &[])]),
+            table("e2", vec![column("ts", "INTEGER", &[])]),
+            table(
+                "windows",
+                vec![
+                    column("lo", "INTEGER", &[]),
+                    column("hi", "INTEGER", &[]),
+                    column("hi2", "INTEGER", &[]),
+                ],
+            ),
+        ],
+        vec![
+            relationship(
+                Cardinality::ManyToOne,
+                "e1.ts >= windows.lo AND e1.ts <= windows.hi",
+            ),
+            relationship(
+                Cardinality::ManyToOne,
+                "e2.ts >= windows.lo AND e2.ts <= windows.hi2",
+            ),
+        ],
+    );
+    let err = plan(&d, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeColumnConflict { ref table, ref column }
+            if table == "windows" && column == "lo"),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn range_join_with_only_a_lower_bound_is_refused() {
+    // a slot needs both edges: a lone `>=` leaves the probe unbounded
+    // above, so every later slot would also match
     let d = dict(
         vec![
             table("events", vec![column("ts", "INTEGER", &[])]),
@@ -463,7 +954,116 @@ fn range_join_is_refused_until_phase_5() {
     );
     let err = plan(&d, &GenerateOptions::default()).unwrap_err();
     assert!(
-        matches!(err, DummyDataError::RangeJoinUnsupported { .. }),
+        matches!(err, DummyDataError::RangeJoinUnsupported { ref reason, .. }
+            if reason.contains("upper")),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn range_join_with_two_lower_bounds_is_refused() {
+    let d = dict(
+        vec![
+            table("events", vec![column("ts", "INTEGER", &[])]),
+            table(
+                "windows",
+                vec![
+                    column("lo", "INTEGER", &[]),
+                    column("lo2", "INTEGER", &[]),
+                    column("hi", "INTEGER", &[]),
+                ],
+            ),
+        ],
+        vec![relationship(
+            Cardinality::ManyToOne,
+            "events.ts >= windows.lo AND events.ts >= windows.lo2 AND events.ts <= windows.hi",
+        )],
+    );
+    let err = plan(&d, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeJoinUnsupported { ref reason, .. }
+            if reason.contains("lower")),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn range_bounds_in_the_same_one_column_are_refused() {
+    // `lo <= ts <= lo` pins the probe to a single point; the slot scheme
+    // needs two distinct bound columns to leave room between the edges
+    let d = dict(
+        vec![
+            table("events", vec![column("ts", "INTEGER", &[])]),
+            table("windows", vec![column("lo", "INTEGER", &[])]),
+        ],
+        vec![relationship(
+            Cardinality::ManyToOne,
+            "events.ts >= windows.lo AND events.ts <= windows.lo",
+        )],
+    );
+    let err = plan(&d, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeJoinUnsupported { ref reason, .. }
+            if reason.contains("distinct")),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn probe_column_in_both_range_and_eq_conjuncts_is_refused() {
+    let d = dict(
+        vec![
+            table("events", vec![column("ts", "INTEGER", &[])]),
+            table(
+                "windows",
+                vec![
+                    column("lo", "INTEGER", &[]),
+                    column("hi", "INTEGER", &[]),
+                    column("mid", "INTEGER", &[]),
+                ],
+            ),
+        ],
+        vec![relationship(
+            Cardinality::ManyToOne,
+            "events.ts >= windows.lo AND events.ts <= windows.hi AND events.ts = windows.mid",
+        )],
+    );
+    let err = plan(&d, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeJoinUnsupported { ref reason, .. }
+            if reason.contains("equality")),
+        "got: {err:?}"
+    );
+}
+
+#[test]
+fn probe_column_copied_from_two_owner_columns_is_refused() {
+    let d = dict(
+        vec![
+            table(
+                "events",
+                vec![column("ts", "INTEGER", &[]), column("wid", "INTEGER", &[])],
+            ),
+            table(
+                "windows",
+                vec![
+                    column("a", "INTEGER", &[]),
+                    column("b", "INTEGER", &[]),
+                    column("lo", "INTEGER", &[]),
+                    column("hi", "INTEGER", &[]),
+                ],
+            ),
+        ],
+        vec![relationship(
+            Cardinality::ManyToOne,
+            "events.ts >= windows.lo AND events.ts <= windows.hi \
+             AND events.wid = windows.a AND events.wid = windows.b",
+        )],
+    );
+    let err = plan(&d, &GenerateOptions::default()).unwrap_err();
+    assert!(
+        matches!(err, DummyDataError::RangeJoinUnsupported { ref reason, .. }
+            if reason.contains("more than one")),
         "got: {err:?}"
     );
 }

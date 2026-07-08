@@ -283,22 +283,103 @@ generated database must pass it in tests.
 - **verify:** PASSED 2026-07-08 — `cargo test --workspace` exit 0, clippy
   0 warnings, `cargo fmt --check` clean
 
-### phase 5: D05 range joins + one-to-one
+### phase 5: D05 range joins + one-to-one — DONE 2026-07-09T09:58:35+12:00
 
-- [ ] slot-based generation for range conjuncts: "one"-side row `k` gets
-      a closed interval from monotone `nth` (e.g. bounds at indices
-      `2k`/`2k+1`), non-overlapping by construction; "many"-side probe
-      values placed strictly inside a chosen slot; handle `Gt/Lt`
-      open bounds and multi-conjunct joins (equality conjuncts pin the
-      slot owner, range conjuncts use its interval)
-- [ ] refuse (descriptive error) join shapes outside the scheme —
-      e.g. range join where the bound columns are also FK/unique in
-      conflicting ways
-- [ ] oracle tests: many-to-one range join (the motivating case),
-      one-to-one checked in both directions, multi-conjunct mix;
-      all pass `validate_data`
-- **verify:** `cargo test --workspace`; D05 oracle fixtures green
-  including range joins
+> design refined at implementation start (2026-07-08). stride is 3, not
+> the planned 2: with bounds at `2k`/`2k+1` no `nth` value exists strictly
+> between them, so `Gt`/`Lt` would be unsatisfiable. slot `k` =
+> `[nth(3k), nth(3k+2)]`, probe = `nth(3k+1)` — strictly inside, handles
+> open and closed bounds uniformly, disjoint by monotonicity.
+
+> layer split follows the interphase precedent: plan.rs (backend-generic,
+> never parses types) assigns roles and refuses *structural* shapes;
+> generate.rs refuses *type-level* shapes up front (non-orderable
+> bound/probe types, differing canonical types within one range join,
+> slot capacity `3·one_rows > capacity`).
+
+- [x] step 1 — shared orientation helper (review finding 9, folded in):
+      extract the first-conjunct orientation + per-direction probe logic +
+      conjunct canonicalization (flip_op) into `dbdict::join_expr`;
+      rich.rs `check_relationships_data` and plan.rs `check_relationships`
+      both consume it. pure refactor for rich.rs — all existing tests
+      stay green
+- also (step 1): plan.rs used exact table-name compare where rich.rs used
+  names_eq — the shared helper imposes ASCII-case-insensitive on both
+- [x] step 2 — plan model (crates/dbdict-dummy-data/src/plan.rs): new
+      roles `RangeBound {rel, Lower/Upper}`, `RangeProbe {rel, one_table,
+      injective}`, `SlotEqCopy {rel, one_table, one_column}` (eq conjunct
+      alongside range: probe copies the slot owner's value; owner `k` per
+      row is shared across a row's roles via the rel-salted draw —
+      identity when one-to-one). supported shape per probe column:
+      exactly one lower (`Ge/Gt`) + one upper (`Le/Lt`) conjunct against
+      two distinct one-side bound columns. refusals: range shape outside
+      the scheme, bound column that is also fk, probe column
+      unique-implied on a non-injective draw, column claimed by two range
+      relationships. range-role columns never go NULL (slots must exist).
+      a supported range join satisfies D05 by disjoint slots — the
+      unique-eq-column rule applies only to pure-equality joins
+- also (step 2): refusals landed stronger than planned, all TDD'd —
+  (a) the fk refusal covers *every* range-role column (probe and copy
+  too, not just bounds): slot values and pk draws cannot both hold;
+  (b) a unique-implied `SlotEqCopy` column is refused even on an
+  injective draw unless the *source* column is unique-implied — copies
+  are only as distinct as their source; (c) new
+  `RangeProbeExceedsOneSide` covers the injective pigeonhole (probe rows
+  > one-side rows) and probing a zero-row one side (slot copies draw
+  owners too, so both roles are checked); (d) `RangeJoinUnsupported`
+  repurposed from "not implemented" to "shape outside the scheme", with
+  a `reason` naming the offending conjuncts
+- also (step 2): claims are conflict-checked map inserts — re-stating an
+  identical claim (one rel using a bound column for two probe columns)
+  is allowed, anything else is `RangeColumnConflict`; generate.rs got a
+  temporary descriptive-error arm for the three new roles (replaced by
+  real rendering in step 3)
+- [x] step 3 — rendering (crates/dbdict-dummy-data-duckdb/src/generate.rs):
+      slot index arithmetic for the three roles (`RangeBound` →
+      `nth(3i)`/`nth(3i+2)`, `RangeProbe` → `nth(3k+1)` at a rel-salted
+      owner `k`, `SlotEqCopy` → the owner's stored value); upfront type
+      checks in `check_range_types` (orderable via `is_orderable`, same
+      canonical type across a range join, slot capacity `3·one_rows ≤
+      capacity`); `stored_value` gained an `opts` param + a `PlainFill`
+      branch so a copy reproduces a plain-fill source deterministically
+- also (step 3): owner draw shared by probe and copy via `owner_for`
+  salted on the *relationship index* (`range:{rel}`), never the column —
+  keying by column would let probe and copy disagree about the owner row;
+  added `Plan::planned_rows` to dedup the "rows for table" scan across the
+  fk-draw, owner, and capacity-check sites; added `injective` to
+  `SlotEqCopy` so the backend needs no cardinality lookup (the two
+  `owner_draw` match arms then merge to one or-pattern)
+- [x] oracle tests (`tests/generate.rs`, 20 total): many-to-one, one-to-one,
+      open `>`/`<` bounds, eq+plain-fill copy, unique eq-copy on one-to-one,
+      non-unique-bound many-to-one (the S06 fix proven end-to-end) — all
+      generate → write_db → `validate_data` == Ok; refusal tests for
+      non-orderable/type-mismatch/eq-copy-type-mismatch/capacity plus the
+      three review-fix paths below
+- also (phase-boundary `/code-review`, agent-based, high effort): the
+  review found **three real defects TDD had missed**, each fixed TDD-style
+  (RED first) — (F1) an eq-copy whose *source* has a non-recomputable role
+  (non-injective fk, or a slot value) died with an internal error →
+  `check_range_types` now refuses up front via `is_recomputable_role`;
+  (F2) a one-to-one range join written bounds-first was falsely refused →
+  `claim_range_roles` now tries every `probe_left_directions()` entry and
+  keeps the first valid shape (many-to-one/one-to-many unchanged: one
+  fixed direction); (F4) an untyped range bound/probe/copy column silently
+  generated a broken db → refused cleanly. a case-mismatch candidate was
+  refuted empirically (S02 already forces exact-case join tables)
+- also (F3, user-directed scope expansion into core validation):
+  **S06 no longer requires a `unique`/`primary_key` bound on a range
+  join** — the at-most-one guarantee is a data property (disjoint
+  intervals) that D05 checks, not a static column property, so a unique
+  bound is neither necessary nor sufficient. S06 now skips any join with a
+  non-`Eq` conjunct and its orientation moved to the shared
+  `JoinExpr::sides()`/`oriented()` (fixing latent case/self-join drift the
+  review flagged in `validate_spec.rs`). site/validation.md S06+D05 entries
+  updated to match; 2 new S06 validator tests
+- deferred (minor polish, noted not built): a `SLOT_STRIDE` constant for
+  the literal `3`; `refuse`-closure dedups for repeated error construction
+- **verify:** PASSED 2026-07-09 — `cargo test --workspace` 403 passed / 0
+  failed, clippy 0 warnings, `cargo fmt --check` clean; agent code review
+  done and its findings fixed
 
 ### phase 6: CLI subcommand + SQL export + docs
 

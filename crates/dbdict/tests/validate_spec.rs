@@ -396,6 +396,79 @@ fn s06_self_join_one_to_many() {
     assert_snapshot!(failing_diagnostic("spec/s06-self-join-one-to-many.yaml"));
 }
 
+// A range join guarantees "at most one match" through disjoint intervals, not
+// through a unique column — the at-most-one property is a data fact D05 checks,
+// not a static schema fact. So S06 must NOT demand a `primary_key`/`unique`
+// column on the "one" side of a range join, even though it does for equality
+// joins. Here neither `window.lo` nor `window.hi` is unique and the dict must
+// still validate.
+#[test]
+fn s06_many_to_one_range_join_needs_no_unique_bound() {
+    assert_valid_dict(
+        "\
+tables:
+  - name: event
+    columns:
+      - name: id
+        type: number(id)
+        constraints: [primary_key]
+        examples: [1, 2]
+      - name: at
+        type: number(id)
+        constraints: [required]
+        examples: [1, 2]
+  - name: window
+    columns:
+      - name: lo
+        type: number(id)
+        constraints: [required]
+        examples: [1, 2]
+      - name: hi
+        type: number(id)
+        constraints: [required]
+        examples: [1, 2]
+relationships:
+  - join: event.at >= window.lo AND event.at <= window.hi
+    cardinality: many-to-one
+",
+    );
+}
+
+// The same exemption applies to a one-to-one range join: disjoint slots plus an
+// injective owner draw give both-directions-at-most-one without either side
+// being unique. S06 would otherwise demand unique columns on both sides.
+#[test]
+fn s06_one_to_one_range_join_needs_no_unique() {
+    assert_valid_dict(
+        "\
+tables:
+  - name: event
+    columns:
+      - name: id
+        type: number(id)
+        constraints: [primary_key]
+        examples: [1, 2]
+      - name: at
+        type: number(id)
+        constraints: [required]
+        examples: [1, 2]
+  - name: window
+    columns:
+      - name: lo
+        type: number(id)
+        constraints: [required]
+        examples: [1, 2]
+      - name: hi
+        type: number(id)
+        constraints: [required]
+        examples: [1, 2]
+relationships:
+  - join: window.lo <= event.at AND window.hi >= event.at
+    cardinality: one-to-one
+",
+    );
+}
+
 // --- data representation (S07) -------------------------------------------
 
 #[test]

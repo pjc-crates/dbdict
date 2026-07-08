@@ -21,11 +21,11 @@ use dbdict::model::DataDict;
 use dbdict::rich::InstantiateFailure;
 use dbdict_ddl::DdlError;
 use dbdict_duckdb::{instantiate, quote_ident};
-use dbdict_dummy_data::{DummyDataError, GenerateOptions, Plan, Role};
+use dbdict_dummy_data::{DummyDataError, GenerateOptions, Plan, RangeBoundKind, Role};
 use duckdb::Connection;
 
 use crate::types::{DuckType, parse_type};
-use crate::values::{ValueError, capacity, nth};
+use crate::values::{ValueError, capacity, is_orderable, nth};
 
 /// Why generation (or writing the result) failed.
 #[derive(Debug)]
@@ -48,6 +48,22 @@ pub enum GenerateError {
     /// requested rows — refused before any rendering. the plan cannot make
     /// this refusal itself: it is backend-generic and never parses types
     UniqueCapacityTooSmall {
+        table: String,
+        column: String,
+        capacity: u64,
+        rows: u64,
+    },
+    /// a range-join column's *type* cannot serve the slot scheme (not
+    /// orderable, or disagreeing with the join's other columns) — the
+    /// structural shapes were already refused by the plan
+    RangeUnsupported {
+        table: String,
+        column: String,
+        reason: String,
+    },
+    /// a range join needs 3 slot values per one-side row; this type
+    /// cannot produce that many distinct values
+    RangeCapacityTooSmall {
         table: String,
         column: String,
         capacity: u64,
@@ -87,6 +103,26 @@ impl fmt::Display for GenerateError {
                 "table \"{table}\" column \"{column}\": {rows} row(s) requested but the \
                  unique column's type can only produce {capacity} distinct value(s) — \
                  lower the row count or widen the type"
+            ),
+            GenerateError::RangeUnsupported {
+                table,
+                column,
+                reason,
+            } => write!(
+                f,
+                "table \"{table}\" column \"{column}\": range join unsupported — {reason}"
+            ),
+            GenerateError::RangeCapacityTooSmall {
+                table,
+                column,
+                capacity,
+                rows,
+            } => write!(
+                f,
+                "table \"{table}\" column \"{column}\": {rows} one-side row(s) need \
+                 {} slot values but the type can only produce {capacity} — lower the \
+                 row count or widen the type",
+                rows.saturating_mul(3)
             ),
             GenerateError::OutputExists { path } => write!(
                 f,
@@ -183,14 +219,21 @@ pub fn generate(dict: &DataDict, opts: &GenerateOptions) -> Result<Generated, Ge
     }
     // table name → column name → parsed type. untyped columns are absent
     // here *and* absent from the generated DDL, so the INSERTs skip them
-    // consistently
+    // consistently. the canonical DESCRIBE spellings are kept alongside:
+    // the range checks compare and report types by that exact string
     let mut types: HashMap<&str, HashMap<&str, DuckType>> = HashMap::new();
+    let mut canonical: CanonMap = HashMap::new();
     for (table, cols) in dict.tables.iter().zip(&inst.tables) {
         let parsed = cols
             .iter()
             .map(|(name, canonical)| (name.as_str(), parse_type(canonical)))
             .collect();
         types.insert(table.name.value.as_str(), parsed);
+        let spelled = cols
+            .iter()
+            .map(|(name, canonical)| (name.as_str(), canonical.as_str()))
+            .collect();
+        canonical.insert(table.name.value.as_str(), spelled);
     }
 
     // capacity refusal up front: a unique column whose type cannot produce
@@ -220,6 +263,10 @@ pub fn generate(dict: &DataDict, opts: &GenerateOptions) -> Result<Generated, Ge
             }
         }
     }
+
+    // range joins get the same up-front treatment: refuse type-level
+    // shapes the slot scheme cannot serve before rendering anything
+    check_range_types(&plan, &types, &canonical)?;
 
     let mut script = dbdict_ddl::generate(dict)?;
     script.push('\n');
@@ -267,6 +314,174 @@ pub fn generate(dict: &DataDict, opts: &GenerateOptions) -> Result<Generated, Ge
 }
 
 type TypeMap<'a> = HashMap<&'a str, HashMap<&'a str, DuckType>>;
+/// table name → column name → canonical DESCRIBE spelling of the type
+type CanonMap<'a> = HashMap<&'a str, HashMap<&'a str, &'a str>>;
+
+/// Refuse range joins whose *types* cannot serve the slot scheme, before
+/// any rendering — the structural shapes were already refused by the
+/// plan, so what is left to check here is exactly what the plan cannot
+/// see (it never parses type strings):
+///
+/// * bounds and probes must be orderable — slot containment leans on
+///   `nth` being monotone, injectivity alone is not enough
+/// * every bound and probe of one relationship must share a canonical
+///   type: index arithmetic across two different `nth` sequences proves
+///   nothing about containment
+/// * slots use indices up to `3·one_rows − 1`, so the type must hold
+///   `3·one_rows` distinct values (the range twin of the unique check)
+/// * an eq copy renders its *source's* literal, so both columns must
+///   share a type, the source must have one at all, and the source's role
+///   must be one [`stored_value`] can reproduce by index
+/// * every bound and probe column must have a declared type — an untyped
+///   one is dropped from the DDL, so its slot values would silently vanish
+fn check_range_types(
+    plan: &Plan,
+    types: &TypeMap,
+    canonical: &CanonMap,
+) -> Result<(), GenerateError> {
+    // first bound/probe seen per relationship — later ones must match it
+    let mut rel_first: HashMap<usize, (String, String, String)> = HashMap::new();
+    for table_plan in &plan.tables {
+        for column_plan in &table_plan.columns {
+            let table = table_plan.table.as_str();
+            let column = column_plan.column.as_str();
+            // eq copies are judged against their source, not the range type
+            if let Role::SlotEqCopy {
+                one_table,
+                one_column,
+                ..
+            } = &column_plan.role
+            {
+                let Some(copy_type) = canonical.get(table).and_then(|t| t.get(column)) else {
+                    // an untyped copy column is dropped from the DDL, so the
+                    // eq conjunct would reference a column that does not exist
+                    return Err(GenerateError::RangeUnsupported {
+                        table: table.to_string(),
+                        column: column.to_string(),
+                        reason: "has no declared type but is an equality-copy column of a \
+                                 range join — give it a type or drop the conjunct"
+                            .to_string(),
+                    });
+                };
+                let source_type = canonical
+                    .get(one_table.as_str())
+                    .and_then(|t| t.get(one_column.as_str()));
+                match source_type {
+                    None => {
+                        return Err(GenerateError::RangeUnsupported {
+                            table: table.to_string(),
+                            column: column.to_string(),
+                            reason: format!(
+                                "its equality source \"{one_table}\".\"{one_column}\" has \
+                                 no type — there is no stored value to copy"
+                            ),
+                        });
+                    }
+                    Some(source_type) if source_type != copy_type => {
+                        return Err(GenerateError::RangeUnsupported {
+                            table: table.to_string(),
+                            column: column.to_string(),
+                            reason: format!(
+                                "its type {copy_type} differs from its equality source \
+                                 \"{one_table}\".\"{one_column}\" ({source_type}) — a copy \
+                                 must share its source's type"
+                            ),
+                        });
+                    }
+                    _ => {}
+                }
+                // the copy reproduces the source's value by index, which only
+                // works for roles `stored_value` can recompute (index-unique,
+                // an injective fk draw, or plain fill). a source that is itself
+                // a seed-dependent draw (non-injective fk) or another slot
+                // value cannot be reproduced — refuse rather than emit an
+                // internal error mid-generation
+                let source_role = plan
+                    .tables
+                    .iter()
+                    .find(|t| t.table == *one_table)
+                    .and_then(|t| t.columns.iter().find(|c| c.column == *one_column))
+                    .map(|c| &c.role);
+                if !source_role.is_some_and(is_recomputable_role) {
+                    return Err(GenerateError::RangeUnsupported {
+                        table: table.to_string(),
+                        column: column.to_string(),
+                        reason: format!(
+                            "its equality source \"{one_table}\".\"{one_column}\" has a value \
+                             that cannot be copied by index (it is a foreign-key draw or a \
+                             slot value) — copy a plain, unique, or primary-key column instead"
+                        ),
+                    });
+                }
+                continue;
+            }
+            // bounds and probes: orderable, one shared type, slot capacity
+            let (rel, slot_rows) = match &column_plan.role {
+                Role::RangeBound { rel, .. } => (*rel, table_plan.rows),
+                Role::RangeProbe { rel, one_table, .. } => (*rel, plan.planned_rows(one_table)),
+                _ => continue,
+            };
+            let Some(ty) = types.get(table).and_then(|t| t.get(column)) else {
+                // a bound/probe with no type is dropped from the DDL, so its
+                // slot values would silently vanish and the join would
+                // reference a missing column — refuse cleanly instead
+                return Err(GenerateError::RangeUnsupported {
+                    table: table.to_string(),
+                    column: column.to_string(),
+                    reason: "has no declared type but is a range-join bound or probe \
+                             column — give it an orderable type"
+                        .to_string(),
+                });
+            };
+            let spelled = canonical[table][column];
+            if !is_orderable(ty) {
+                return Err(GenerateError::RangeUnsupported {
+                    table: table.to_string(),
+                    column: column.to_string(),
+                    reason: format!(
+                        "type {spelled} is not orderable — slot bounds and probes \
+                         need monotone value generation"
+                    ),
+                });
+            }
+            match rel_first.get(&rel) {
+                None => {
+                    rel_first.insert(
+                        rel,
+                        (table.to_string(), column.to_string(), spelled.to_string()),
+                    );
+                }
+                Some((first_table, first_column, first_type)) if first_type != spelled => {
+                    return Err(GenerateError::RangeUnsupported {
+                        table: table.to_string(),
+                        column: column.to_string(),
+                        reason: format!(
+                            "its type {spelled} differs from \"{first_table}\".\
+                             \"{first_column}\" ({first_type}) — every bound and probe \
+                             of one range join must share a canonical type"
+                        ),
+                    });
+                }
+                Some(_) => {}
+            }
+            let cap = capacity(ty);
+            match slot_rows.checked_mul(3) {
+                Some(needed) if needed <= cap => {}
+                // overflow means the row count is astronomically beyond any
+                // type's capacity — same refusal
+                _ => {
+                    return Err(GenerateError::RangeCapacityTooSmall {
+                        table: table.to_string(),
+                        column: column.to_string(),
+                        capacity: cap,
+                        rows: slot_rows,
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 /// The literal for one cell, per the column's role. NULL placement runs
 /// first: a nullable column goes NULL on a deterministic, seed-dependent
@@ -303,39 +518,123 @@ fn value_for(
                 // all resolve to the same index (see stored_value)
                 row
             } else {
-                // seed-dependent draw; the plan guaranteed target_rows > 0
-                let target_rows = plan
-                    .tables
-                    .iter()
-                    .find(|t| t.table == *target_table)
-                    .map(|t| t.rows)
-                    .unwrap_or(0)
-                    .max(1);
+                // seed-dependent draw; the plan guaranteed target_rows > 0,
+                // so max(1) is only a divide-by-zero guard
+                let target_rows = plan.planned_rows(target_table).max(1);
                 mix(opts.seed, &format!("fk:{table}.{column}"), row) % target_rows
             };
-            stored_value(plan, types, target_table, target_column, k)
+            stored_value(plan, types, opts, target_table, target_column, k)
         }
-        Role::PlainFill => {
-            let ty = &types[table][column];
-            let cap = capacity(ty);
-            if cap == 0 {
-                // unsupported type — let nth produce its descriptive error
-                return literal(types, table, column, 0);
-            }
-            let index = mix(opts.seed, &format!("fill:{table}.{column}"), row) % cap;
-            literal(types, table, column, index)
+        Role::PlainFill => plain_fill_value(types, opts, table, column, row),
+        Role::RangeBound { kind, .. } => {
+            // one-side row i owns slot i: edges at nth(3i) and nth(3i + 2).
+            // nth is monotone for orderable types, so slots never overlap
+            let offset = match kind {
+                RangeBoundKind::Lower => 0,
+                RangeBoundKind::Upper => 2,
+            };
+            literal(types, table, column, 3 * row + offset)
+        }
+        Role::RangeProbe {
+            rel,
+            one_table,
+            injective,
+        } => {
+            // nth(3k + 1) sits strictly between slot k's edges — inside
+            // slot k for open and closed bounds alike, outside every other
+            let k = owner_for(plan, opts, *rel, one_table, *injective, row);
+            literal(types, table, column, 3 * k + 1)
+        }
+        Role::SlotEqCopy {
+            rel,
+            one_table,
+            one_column,
+            injective,
+        } => {
+            // same rel-salted draw as the probe, so the eq conjunct and the
+            // range conjuncts agree about which one-side row this row matches
+            let k = owner_for(plan, opts, *rel, one_table, *injective, row);
+            stored_value(plan, types, opts, one_table, one_column, k)
         }
     }
 }
 
-/// The value actually stored at `row` of a unique column — what an fk draw
-/// must reproduce. Every fk target is a primary-key column, so its role is
-/// either index-generated (value is `nth(row)`) or itself an injective
-/// (identity) draw — follow that chain. The plan refused fk cycles, so the
-/// recursion always terminates.
+/// The slot owner drawn by probe-side row `row` for relationship `rel`.
+/// Salted by the relationship *index* — never the column name — so the
+/// range probe and every eq copy of one relationship read the same `k`:
+/// their values must all point at the same one-side row.
+fn owner_for(
+    plan: &Plan,
+    opts: &GenerateOptions,
+    rel: usize,
+    one_table: &str,
+    injective: bool,
+    row: u64,
+) -> u64 {
+    if injective {
+        // one-to-one: owner k = row i, mirroring the injective fk draw —
+        // distinct rows own distinct slots by construction
+        return row;
+    }
+    // the plan refused probing a zero-row one side, so `max(1)` is only a
+    // belt-and-braces guard against dividing by zero
+    let one_rows = plan.planned_rows(one_table).max(1);
+    mix(opts.seed, &format!("range:{rel}"), row) % one_rows
+}
+
+/// The deterministic plain-fill literal for one cell — shared by
+/// `value_for` and `stored_value` so an eq copy recomputes exactly the
+/// literal its source row rendered (same salt, same formula).
+fn plain_fill_value(
+    types: &TypeMap,
+    opts: &GenerateOptions,
+    table: &str,
+    column: &str,
+    row: u64,
+) -> Result<String, GenerateError> {
+    let ty = &types[table][column];
+    let cap = capacity(ty);
+    if cap == 0 {
+        // unsupported type — let nth produce its descriptive error
+        return literal(types, table, column, 0);
+    }
+    let index = mix(opts.seed, &format!("fill:{table}.{column}"), row) % cap;
+    literal(types, table, column, index)
+}
+
+/// Whether [`stored_value`] can reproduce a column's value from its index
+/// alone. True for index-generated columns, injective (identity) fk draws,
+/// and plain fill — the cases `stored_value` handles. A non-injective fk
+/// draw or a slot value depends on a seed-scattered owner index that a
+/// copy cannot reconstruct, so those are false and refused up front.
+fn is_recomputable_role(role: &Role) -> bool {
+    matches!(
+        role,
+        Role::IndexedUnique
+            | Role::FkDraw {
+                injective: true,
+                ..
+            }
+            | Role::PlainFill
+    )
+}
+
+/// The value another cell must reproduce: what row `row` of this column
+/// rendered. Fk draws resolve their target's primary-key value; slot eq
+/// copies resolve their source column. Index-generated columns are
+/// `nth(row)`, injective (identity) fk draws follow the chain — the plan
+/// refused fk cycles, so the recursion terminates — and plain-fill
+/// sources recompute the same deterministic fill.
+///
+/// One caveat, deliberate: a *nullable* plain-fill source may actually
+/// have stored NULL (the null-fraction rule runs before roles). The copy
+/// still renders the non-NULL fill literal, so the eq conjunct simply
+/// matches nothing for that row — zero matches is within D05's "at most
+/// one", and it keeps NULLs out of copy columns that may be `required`.
 fn stored_value(
     plan: &Plan,
     types: &TypeMap,
+    opts: &GenerateOptions,
     table: &str,
     column: &str,
     row: u64,
@@ -351,11 +650,16 @@ fn stored_value(
             target_table,
             target_column,
             injective: true,
-        }) => stored_value(plan, types, target_table, target_column, row),
-        // unreachable by construction (fk targets are pk columns), but a
-        // descriptive error beats a panic if that invariant ever moves
+        }) => stored_value(plan, types, opts, target_table, target_column, row),
+        Some(Role::PlainFill) => plain_fill_value(types, opts, table, column, row),
+        // anything else (non-injective draws, range roles) cannot be
+        // recomputed without reading the database — a descriptive error
+        // beats a panic if the plan's invariants ever move
         _ => Err(GenerateError::Db {
-            error: format!("internal: fk target \"{table}\".\"{column}\" is not index-generated"),
+            error: format!(
+                "internal: the stored value of \"{table}\".\"{column}\" \
+                 cannot be recomputed"
+            ),
         }),
     }
 }

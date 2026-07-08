@@ -13,7 +13,7 @@ use dbdict::model::FkTarget;
 
 mod plan;
 
-pub use plan::{ColumnPlan, GenerateOptions, Plan, Role, TablePlan, plan};
+pub use plan::{ColumnPlan, GenerateOptions, Plan, RangeBoundKind, Role, TablePlan, plan};
 
 /// Why a dictionary cannot be turned into a generation plan. Every refusal
 /// carries enough context to name the offending declaration — mirroring
@@ -62,9 +62,37 @@ pub enum DummyDataError {
         one_table: String,
         columns: Vec<String>,
     },
-    /// range operators (`>=`, `<`, …) need slot-based generation, which is
-    /// not implemented yet
-    RangeJoinUnsupported { join: String },
+    /// a join with range operators (`>=`, `<`, …) whose shape the slot
+    /// scheme cannot satisfy — `reason` names the offending conjuncts
+    RangeJoinUnsupported { join: String, reason: String },
+    /// a column a range join must control is also declared `foreign_key`;
+    /// slot values and primary-key draws cannot both hold
+    RangeColumnIsForeignKey {
+        join: String,
+        table: String,
+        column: String,
+    },
+    /// a range join can make this column's generated values repeat (rows
+    /// sharing a slot owner), but the column is declared `unique` or
+    /// `primary_key`
+    RangeColumnCannotBeUnique {
+        join: String,
+        table: String,
+        column: String,
+    },
+    /// two range relationships both claim this column; a column's values
+    /// can only satisfy one rule
+    RangeColumnConflict { table: String, column: String },
+    /// every probe row draws a slot owner on the one side — one *distinct*
+    /// owner per row when the draw is injective (one-to-one) — but the one
+    /// side is planned with too few rows for that
+    RangeProbeExceedsOneSide {
+        table: String,
+        column: String,
+        rows: u64,
+        one_table: String,
+        one_rows: u64,
+    },
     /// the relationship's join string failed to parse (spec check S04);
     /// there is nothing to generate from
     JoinUnparsed { join: String },
@@ -143,10 +171,48 @@ impl fmt::Display for DummyDataError {
                  primary_key, so generated rows could match more than once",
                 columns.join(", ")
             ),
-            DummyDataError::RangeJoinUnsupported { join } => write!(
+            DummyDataError::RangeJoinUnsupported { join, reason } => write!(
                 f,
-                "relationship `{join}` joins on a range operator; range-join \
-                 generation is not supported yet"
+                "relationship `{join}` is outside the supported range-join \
+                 shape: {reason}"
+            ),
+            DummyDataError::RangeColumnIsForeignKey {
+                join,
+                table,
+                column,
+            } => write!(
+                f,
+                "relationship `{join}` needs \"{table}\".\"{column}\" to hold \
+                 slot values, but the column is declared foreign_key — it \
+                 cannot also draw from a primary key"
+            ),
+            DummyDataError::RangeColumnCannotBeUnique {
+                join,
+                table,
+                column,
+            } => write!(
+                f,
+                "relationship `{join}` can make \"{table}\".\"{column}\" \
+                 repeat values (rows sharing a slot owner), but the column \
+                 is declared unique or primary_key"
+            ),
+            DummyDataError::RangeColumnConflict { table, column } => write!(
+                f,
+                "column \"{table}\".\"{column}\" is claimed by more than one \
+                 range relationship; its values can only satisfy one"
+            ),
+            DummyDataError::RangeProbeExceedsOneSide {
+                table,
+                column,
+                rows,
+                one_table,
+                one_rows,
+            } => write!(
+                f,
+                "table \"{table}\" column \"{column}\" lands in the slots of \
+                 \"{one_table}\", but {rows} rows cannot draw slot owners \
+                 from its {one_rows} planned rows — raise \"{one_table}\"'s \
+                 row count"
             ),
             DummyDataError::JoinUnparsed { join } => write!(
                 f,

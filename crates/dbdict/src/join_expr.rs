@@ -89,6 +89,75 @@ impl JoinExpr {
             .iter()
             .flat_map(|c| [&c.lhs, &c.rhs].into_iter())
     }
+
+    /// The join's two positional sides as `(probe_table, other_table)`.
+    /// The FIRST conjunct defines which table is "left"; `probe_left`
+    /// picks which side is being probed (the "many" side in a D05 check).
+    /// Positional, so a self-join still has two distinguishable sides.
+    pub fn sides(&self, probe_left: bool) -> (&str, &str) {
+        // parse() never produces an empty conjunct list
+        let first = &self.conjuncts[0];
+        if probe_left {
+            (&first.lhs.table, &first.rhs.table)
+        } else {
+            (&first.rhs.table, &first.lhs.table)
+        }
+    }
+
+    /// Every conjunct re-read from the probed side: `probe OP other`.
+    ///
+    /// This is the one place that owns D05 orientation semantics — the
+    /// data validator (rich.rs) and the dummy-data planner both consume
+    /// it, so they cannot drift apart:
+    /// * conjuncts written the other way round (`b.lo <= a.ts` for
+    ///   `a.ts >= b.lo`) are canonicalized against the first conjunct's
+    ///   left table before orienting — same predicate, operator mirrored
+    /// * table names match ASCII-case-insensitively, because duckdb
+    ///   identifiers fold case (a self-join is already canonical: both
+    ///   names are the same table, so orientation stays positional)
+    /// * probing the right side mirrors each operator again so the result
+    ///   always reads probe-side first
+    pub fn oriented(&self, probe_left: bool) -> Vec<OrientedConjunct<'_>> {
+        let left_table = &self.conjuncts[0].lhs.table;
+        let mut out = Vec::new();
+        for conj in &self.conjuncts {
+            // canonicalize: lhs on the join's left table
+            let (lhs, op, rhs) = if conj.lhs.table.eq_ignore_ascii_case(left_table) {
+                (&conj.lhs, conj.op, &conj.rhs)
+            } else {
+                (&conj.rhs, flip_op(conj.op), &conj.lhs)
+            };
+            // orient for the probe
+            let (probe, op, other) = if probe_left {
+                (lhs, op, rhs)
+            } else {
+                (rhs, flip_op(op), lhs)
+            };
+            out.push(OrientedConjunct { probe, op, other });
+        }
+        out
+    }
+}
+
+/// One join conjunct read from the probed side: `probe OP other`.
+/// Produced by [`JoinExpr::oriented`].
+#[derive(Debug, Clone, Copy)]
+pub struct OrientedConjunct<'a> {
+    pub probe: &'a QCol,
+    pub op: JoinOp,
+    pub other: &'a QCol,
+}
+
+/// Mirror a comparison so its operands can swap sides: `a >= b` and
+/// `b <= a` are the same predicate. Equality is its own mirror.
+pub fn flip_op(op: JoinOp) -> JoinOp {
+    match op {
+        JoinOp::Eq => JoinOp::Eq,
+        JoinOp::Ge => JoinOp::Le,
+        JoinOp::Le => JoinOp::Ge,
+        JoinOp::Gt => JoinOp::Lt,
+        JoinOp::Lt => JoinOp::Gt,
+    }
 }
 
 struct Parser<'a> {
@@ -422,5 +491,81 @@ mod tests {
         // The unknown operator sits at byte 4.
         let err = JoinExpr::parse("a.x ~ b.y").unwrap_err();
         assert_eq!(err.at, 4);
+    }
+
+    // --- orientation (shared by the D05 validator and the dummy-data planner) ---
+
+    #[test]
+    fn sides_follow_the_first_conjunct() {
+        let j = parse("events.ts >= periods.lo AND events.ts <= periods.hi");
+        assert_eq!(j.sides(true), ("events", "periods"));
+        assert_eq!(j.sides(false), ("periods", "events"));
+    }
+
+    #[test]
+    fn oriented_probe_left_keeps_canonical_conjuncts_as_written() {
+        let j = parse("a.x >= b.y");
+        let oc = j.oriented(true);
+        assert_eq!(oc.len(), 1);
+        assert_eq!(oc[0].probe.column, "x");
+        assert_eq!(oc[0].op, JoinOp::Ge);
+        assert_eq!(oc[0].other.column, "y");
+    }
+
+    #[test]
+    fn oriented_probe_right_mirrors_every_operator() {
+        // probing b reads the same predicate from b's side: `a.x >= b.y`
+        // becomes `b.y <= a.x`
+        let j = parse("a.x >= b.y AND a.z < b.w");
+        let oc = j.oriented(false);
+        assert_eq!(oc[0].probe.column, "y");
+        assert_eq!(oc[0].op, JoinOp::Le);
+        assert_eq!(oc[0].other.column, "x");
+        assert_eq!(oc[1].probe.column, "w");
+        assert_eq!(oc[1].op, JoinOp::Gt);
+        assert_eq!(oc[1].other.column, "z");
+    }
+
+    #[test]
+    fn oriented_canonicalizes_conjuncts_written_the_other_way_round() {
+        // the second conjunct is written right-to-left: `b.lo <= a.ts` is
+        // the same predicate as `a.ts >= b.lo`, and must orient like it
+        let j = parse("a.ts <= b.hi AND b.lo <= a.ts");
+        let oc = j.oriented(true);
+        assert_eq!(oc[1].probe.column, "ts");
+        assert_eq!(oc[1].op, JoinOp::Ge);
+        assert_eq!(oc[1].other.column, "lo");
+    }
+
+    #[test]
+    fn oriented_matches_tables_case_insensitively() {
+        // duckdb identifiers fold case, so `A.p = a.q`'s second conjunct
+        // spelled `A`/`a` differently still canonicalizes by table match —
+        // the validator compares this way (names_eq) and the planner must
+        // agree with it
+        let j = parse("a.x = b.y AND B.q = A.p");
+        let oc = j.oriented(true);
+        assert_eq!(oc[1].probe.column, "p");
+        assert_eq!(oc[1].other.column, "q");
+    }
+
+    #[test]
+    fn oriented_self_join_is_positional() {
+        // both sides name the same table: conjuncts are already canonical
+        // (lhs is "the left side") and probing flips positionally
+        let j = parse("otters.pup_number = otters.otter_no");
+        let left = j.oriented(true);
+        assert_eq!(left[0].probe.column, "pup_number");
+        let right = j.oriented(false);
+        assert_eq!(right[0].probe.column, "otter_no");
+    }
+
+    #[test]
+    fn flip_op_mirrors_comparisons() {
+        assert_eq!(flip_op(JoinOp::Eq), JoinOp::Eq);
+        assert_eq!(flip_op(JoinOp::Ge), JoinOp::Le);
+        assert_eq!(flip_op(JoinOp::Le), JoinOp::Ge);
+        assert_eq!(flip_op(JoinOp::Gt), JoinOp::Lt);
+        assert_eq!(flip_op(JoinOp::Lt), JoinOp::Gt);
     }
 }

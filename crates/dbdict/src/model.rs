@@ -259,6 +259,20 @@ pub enum Cardinality {
 }
 
 impl Cardinality {
+    /// Which direction(s) a D05 check must bound, as "is the probed
+    /// ('many') side the join's left side". Probing a table counts its
+    /// rows matching more than one row of the other side, so the probed
+    /// side is the "many" side; one-to-one bounds both directions. Feeds
+    /// [`crate::join_expr::JoinExpr::oriented`] — the validator and the
+    /// dummy-data planner both read orientation through this pair.
+    pub fn probe_left_directions(self) -> &'static [bool] {
+        match self {
+            Cardinality::ManyToOne => &[true],
+            Cardinality::OneToMany => &[false],
+            Cardinality::OneToOne => &[true, false],
+        }
+    }
+
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "one-to-one" => Self::OneToOne,
