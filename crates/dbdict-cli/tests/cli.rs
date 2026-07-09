@@ -924,7 +924,12 @@ fn ddl_refuses_shadowed_typedefs() {
 }
 
 /// A legacy (0.1.0) dictionary has no DuckDB types to generate from; `ddl`
-/// says so and fails rather than emitting broken SQL.
+/// says so and fails rather than emitting broken SQL. The fixture is otherwise
+/// spec-valid (the `number` column carries `examples`, which S07 requires) so
+/// the refusal comes from the *generator's* legacy check, not from a spec-level
+/// error at an earlier layer — and the assertion targets a distinctive phrase
+/// from the refusal message, not the bare word "legacy" (which also appears in
+/// the fixture's temp-dir path and would pass on the wrong output).
 #[test]
 fn ddl_refuses_a_legacy_dictionary() {
     let dir = temp_fixture_dir("ddl-legacy");
@@ -939,6 +944,7 @@ fn ddl_refuses_a_legacy_dictionary() {
                 columns:
                   - name: qty
                     type: number
+                    examples: [1, 2, 3]
         "#},
     )
     .unwrap();
@@ -950,5 +956,8 @@ fn ddl_refuses_a_legacy_dictionary() {
         .expect("failed to run dbdict");
     assert!(!output.status.success(), "legacy must refuse");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("legacy"), "got: {stderr}");
+    assert!(
+        stderr.contains("cannot generate DDL from a legacy"),
+        "got:\n{stderr}"
+    );
 }

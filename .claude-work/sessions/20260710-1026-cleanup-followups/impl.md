@@ -30,22 +30,27 @@ No behavior change — a readability pass, done first to warm up.
   byte-identical since `SLOT_STRIDE == 3`. clippy 0 warnings, fmt clean
 - **verify (manual):** diff reviewed — every replaced `3` was a slot stride
 
-### phase 2: fix the false-positive legacy DDL test (item 3)
+### phase 2: fix the false-positive legacy DDL test (item 3) — DONE 2026-07-10T11:00:51+12:00
 Test-only change, but it exposes whether the real refusal path works.
-- [ ] make the fixture spec-valid so it clears S07 (`examples:` required) and
-      actually reaches `DdlError::LegacyUnsupported` — mirror the shape of the
-      working `dummy_refuses_a_legacy_dictionary` fixture (cli.rs:560) which adds
-      `examples:` to a `0.1.0` dict
-- [ ] change the assertion from `stderr.contains("legacy")` (matches the temp-dir
-      path `dbdict-cli-ddl-legacy-*`, a false positive) to a distinctive phrase
-      from the actual message: `contains("cannot generate DDL from a legacy")`
-      (`crates/dbdict-ddl/src/lib.rs:46`)
-- [ ] sanity: confirm the *new* assertion FAILS against the *old* fixture (proves
-      the fixture, not just the needle, was the bug) before finalizing
-- **verify (automated):** `cargo test -p dbdict-cli ddl_refuses_a_legacy_dictionary`
-  passes; temporarily break `DdlError::LegacyUnsupported` (comment the `return
-  Err` at ddl/src/lib.rs:110) and confirm the test now FAILS — then restore
-- **verify (manual):** the temp-dir name no longer contains the asserted needle
+- [x] made the fixture spec-valid — added `examples: [1, 2, 3]` to the `number`
+      column so it clears S07 and actually reaches `DdlError::LegacyUnsupported`
+      (mirrors `dummy_refuses_a_legacy_dictionary`, cli.rs:560)
+- [x] changed the assertion `contains("legacy")` → `contains("cannot generate DDL
+      from a legacy")` — the bare word matched the temp-dir path
+      `dbdict-cli-ddl-legacy-*`; the phrase can only come from the refusal message
+      (`crates/dbdict-ddl/src/lib.rs:46`). rewrote the doc comment to record both
+      traps.
+- [x] **proof (i)** — reverted the fixture to no-`examples` and confirmed the test
+      FAILS (dies at S07, not the generator): needle absent, so the fixture change
+      was genuinely required. restored.
+- [x] **proof (ii)** — bypassed `DdlError::LegacyUnsupported` (`if false && …` in
+      ddl/lib.rs:109) and confirmed the test FAILS at the *message* assertion: the
+      legacy dict then hits `ScriptFailed` (a different error), so the test pins
+      the specific refusal, not merely a nonzero exit. restored via `git checkout`
+      (file was clean at HEAD).
+- **verify (automated):** `ddl_refuses_a_legacy_dictionary` passes; both failure
+  probes confirmed. `git status` clean except the intended cli.rs change.
+- **verify (manual):** the asserted phrase cannot appear in the temp-dir name
 
 ### phase 3: extract the shared CLI load helper (item 1)
 Behavior-preserving refactor — covered by existing CLI tests, no assertion edits.
