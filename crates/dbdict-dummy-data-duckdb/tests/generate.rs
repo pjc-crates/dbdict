@@ -138,6 +138,47 @@ fn generated_database_passes_validate_data_end_to_end() {
     );
 }
 
+/// The `--sql` export is `Generated.script`; it must be a *complete* script
+/// that rebuilds the database on its own — including LOADing any declared
+/// extension. Regression guard: extension LOADs used to run inside `write_db`
+/// and were absent from the exported script, so `--sql` on a dict declaring an
+/// extension produced a script that could not reproduce the db by itself.
+#[test]
+fn exported_script_self_contains_extension_loads_and_reproduces_the_db() {
+    // RICH_DICT declares the json extension (and a JSON column that needs it)
+    let dict_path = fixture(RICH_DICT);
+    let dict = load(&dict_path);
+    let generated = generate(&dict, &GenerateOptions::default()).expect("generates");
+
+    // the LOAD must be present in the exported text itself. this is the check
+    // that fails on the pre-fix code: json autoloads, so *executing* the script
+    // succeeds even with the LOAD missing — only inspecting the text catches it
+    assert!(
+        generated.script.contains("LOAD json;"),
+        "exported script must LOAD its declared extension:\n{}",
+        generated.script
+    );
+    // and it must lead the script, before any CREATE that could depend on it
+    let load_at = generated.script.find("LOAD json;").expect("LOAD present");
+    let first_create = generated.script.find("CREATE").expect("a CREATE present");
+    assert!(
+        load_at < first_create,
+        "LOAD must precede the first CREATE:\n{}",
+        generated.script
+    );
+
+    // round-trip: execute the exported script — and nothing else — on a bare
+    // connection, proving it reproduces the database standalone (no separate
+    // LOAD, no write_db; exactly what a user running the `--sql` file would do)
+    let conn = duckdb::Connection::open_in_memory().expect("in-memory db");
+    conn.execute_batch(&generated.script)
+        .expect("exported script must run standalone");
+    let orders: i64 = conn
+        .query_row("SELECT count(*) FROM orders", [], |r| r.get(0))
+        .expect("orders table present and populated");
+    assert_eq!(orders, 10, "round-trip db should hold the default 10 rows");
+}
+
 #[test]
 fn one_to_one_with_unique_fk_passes_validate_data() {
     let dict_path = fixture(indoc! {r#"

@@ -443,9 +443,9 @@ fn run_dummy(args: DummyArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // optional --sql export: the DDL + INSERT script only. it is NOT a
-    // fully self-contained script — any declared duckdb extensions are
-    // LOADed by write_db itself, not written here
+    // optional --sql export: the exact script generate() produced — a
+    // self-contained reproduction. any declared duckdb extensions lead it as
+    // `LOAD` statements, so running this file on a bare duckdb rebuilds the db
     if let Some(sql_path) = args.sql.as_deref()
         && let Err(err) = std::fs::write(sql_path, &generated.script)
     {

@@ -106,9 +106,9 @@ Commands:
   (default 0) for reproducible output. By default about 10% of each optional
   column's values are NULL; set `--null-fraction 0.0` to fill every value (or
   higher, up to `1.0`, for more NULLs). `--sql <file.sql>` also writes the
-  generated `CREATE`/`INSERT` script for inspection — note this is the data
-  script only; any declared DuckDB extensions are `LOAD`ed by the tool
-  separately and are not included in the file. Values are correct rather than
+  generated script for inspection — a self-contained reproduction: any declared
+  DuckDB extensions lead the file as `LOAD` statements, so running it on a bare
+  DuckDB rebuilds the same database. Values are correct rather than
   realistic — no names, addresses, or distributions. Legacy (0.1.0)
   dictionaries are refused.
 * `types duckdb` / `types parquet` print the column types of a data source.

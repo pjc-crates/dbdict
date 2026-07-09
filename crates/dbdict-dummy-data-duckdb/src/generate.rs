@@ -3,7 +3,9 @@
 //!
 //! The script *is* the deliverable twice over: `write_db` executes it, and
 //! the CLI's `--sql` export writes the same text — so what a user debugs is
-//! exactly what built their database.
+//! exactly what built their database. Declared duckdb extensions are folded
+//! in as leading `LOAD` statements, so the script is self-contained: running
+//! it on a bare connection reproduces the database with no other setup.
 //!
 //! Value resolution rides on the plan's roles plus one convention: an
 //! *injective* fk draw always picks target row `k = i` (identity). Every
@@ -36,6 +38,18 @@ use crate::values::{ValueError, capacity, is_orderable, nth};
 /// types, so distinct slots never overlap. Roles are defined in
 /// `dbdict-dummy-data`'s `plan.rs`; this is where they turn into indices.
 const SLOT_STRIDE: u64 = 3;
+
+/// A duckdb extension name safe to interpolate into a `LOAD` statement:
+/// non-empty, lowercase ASCII letters / digits / underscores. This is spec
+/// check S19's rule, re-applied here because `generate` is a public entry
+/// point that can be handed a dictionary which never went through spec
+/// validation, and an extension name becomes part of the emitted SQL.
+fn is_safe_extension_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+}
 
 /// Why generation (or writing the result) failed.
 #[derive(Debug)]
@@ -159,14 +173,13 @@ impl From<DdlError> for GenerateError {
     }
 }
 
-/// A finished generation: the full SQL script and what it needs to run.
+/// A finished generation: the full, self-contained SQL script.
 #[derive(Debug, Clone)]
 pub struct Generated {
-    /// DDL (types + tables) followed by one INSERT per non-empty table,
-    /// in foreign-key-safe order — also the `--sql` debug export
+    /// leading `LOAD` per declared extension, then the DDL (types + tables),
+    /// then one INSERT per non-empty table in foreign-key-safe order — a
+    /// complete, standalone script, and exactly what the `--sql` export writes
     pub script: String,
-    /// declared extensions to LOAD before executing the script
-    extensions: Vec<String>,
 }
 
 impl Generated {
@@ -174,6 +187,10 @@ impl Generated {
     /// already exists: the dictionary's own database (or anything else)
     /// must never be silently clobbered — deleting first is an explicit
     /// caller decision (the CLI's `--force`).
+    ///
+    /// The script self-contains its extension `LOAD`s, so executing it is the
+    /// whole job — no separate setup, and running the `--sql` export by hand
+    /// does exactly the same thing.
     pub fn write_db(&self, path: &Path) -> Result<(), GenerateError> {
         if path.exists() {
             return Err(GenerateError::OutputExists {
@@ -183,23 +200,6 @@ impl Generated {
         let conn = Connection::open(path).map_err(|e| GenerateError::Db {
             error: e.to_string(),
         })?;
-        for name in &self.extensions {
-            // same charset rule as spec check S19, re-checked because the
-            // name is interpolated into SQL and dictionaries are untrusted
-            let safe = !name.is_empty()
-                && name
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
-            if !safe {
-                return Err(GenerateError::Db {
-                    error: format!("`{name}` is not a valid extension name"),
-                });
-            }
-            conn.execute(&format!("LOAD {name}"), [])
-                .map_err(|e| GenerateError::Db {
-                    error: format!("LOAD {name} failed: {e}"),
-                })?;
-        }
         conn.execute_batch(&self.script)
             .map_err(|e| GenerateError::Db {
                 error: e.to_string(),
@@ -278,7 +278,24 @@ pub fn generate(dict: &DataDict, opts: &GenerateOptions) -> Result<Generated, Ge
     // shapes the slot scheme cannot serve before rendering anything
     check_range_types(&plan, &types, &canonical)?;
 
-    let mut script = dbdict_ddl::generate(dict)?;
+    // declared extensions LOAD first, so any type or table that depends on one
+    // (e.g. a JSON column) resolves when the script runs. folding the LOADs in
+    // here — rather than issuing them separately at write time — is what makes
+    // the script, and the `--sql` export of it, a complete standalone reproduction
+    let mut script = String::new();
+    for ext in &dict.extensions {
+        let name = &ext.value;
+        if !is_safe_extension_name(name) {
+            return Err(GenerateError::Db {
+                error: format!("`{name}` is not a valid extension name"),
+            });
+        }
+        script.push_str(&format!("LOAD {name};\n"));
+    }
+    if !dict.extensions.is_empty() {
+        script.push('\n');
+    }
+    script.push_str(&dbdict_ddl::generate(dict)?);
     script.push('\n');
     for table_plan in &plan.tables {
         if table_plan.rows == 0 {
@@ -317,10 +334,7 @@ pub fn generate(dict: &DataDict, opts: &GenerateOptions) -> Result<Generated, Ge
         }
     }
 
-    Ok(Generated {
-        script,
-        extensions: dict.extensions.iter().map(|e| e.value.clone()).collect(),
-    })
+    Ok(Generated { script })
 }
 
 type TypeMap<'a> = HashMap<&'a str, HashMap<&'a str, DuckType>>;

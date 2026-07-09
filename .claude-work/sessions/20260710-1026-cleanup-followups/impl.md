@@ -76,30 +76,39 @@ Behavior-preserving refactor — covered by existing CLI tests, no assertion edi
   helper call + their unique tail even after adding the documented helper; no
   message string changed
 
-### phase 4: make `--sql` a self-contained reproduction (item 2)
+### phase 4: make `--sql` a self-contained reproduction (item 2) — DONE 2026-07-10T11:46:33+12:00
 The one real behavior change. Design (confirmed in goal): emit `LOAD name;` into
 `script` at generation time; simplify `write_db`; drop the private `extensions`
 field.
-- [ ] TDD: add a test with a dict declaring a **non-autoloading** extension (not
-      `json`, which autoloads — that masked the bug). **Round-trip assertion**
-      (decided): execute the exported `--sql` script *alone* on a fresh
-      `Connection` (no separate LOAD, no `write_db`) and assert the tables + rows
-      are present — proving self-containment for real. Write it failing first.
-- [ ] in `crates/dbdict-dummy-data-duckdb/src/generate.rs`, move the untrusted
-      extension-name charset check (currently `write_db`, generate.rs:176–187) to
-      generation time, and prepend validated `LOAD name;` lines to `script`
-- [ ] drop the private `extensions` field (generate.rs:159) and its populate at
-      generate.rs:312; simplify `write_db` (generate.rs:167) to open + run script
-- [ ] flip the now-false comments/claims: `run_dummy`'s `--sql` comment
-      (main.rs:459–461, "it is NOT a fully self-contained script") and the
-      README / `site/index.md` line describing `--sql`
-- [ ] grep for other prose asserting `--sql` completeness and correct each
-- **verify (automated):** new test passes; `cargo test --workspace` green
-- **verify (manual):** actually run `dbdict dummy` with `--sql` on a dict
-  declaring a non-autoloading extension, open the exported `.sql` in a fresh
-  DuckDB (or re-run just the script), confirm it builds the DB with no extra
-  setup — verify the artifact, don't assert it in prose (insight
-  20260709-1128)
+- constraint discovered: the duckdb dep is `features=["bundled","json"]`, so
+  **json is the only extension that LOADs offline** (others need network
+  INSTALL). "non-autoloading extension" from the plan is unavailable here — and
+  json autoloads, so a plain round-trip can't prove the fold. Resolved by adding
+  a **text-contains** assertion (`script.contains("LOAD json;")`) as the
+  autoload-independent regression guard, plus the round-trip for executability.
+- [x] TDD test `exported_script_self_contains_extension_loads_and_reproduces_the_db`
+      (tests/generate.rs): asserts the exported script contains `LOAD json;`,
+      that it leads the first `CREATE`, then round-trips — executes the script
+      *alone* on a fresh `duckdb::Connection` and counts rows. Proven to fail
+      first: temporarily skipped the fold → test FAILED at the text assertion
+      (round-trip would have passed via autoload — exactly the insight's trap).
+- [x] `generate()` prepends validated `LOAD name;` lines to `script` before the
+      DDL (extensions must load before a JSON column's `CREATE`); charset check
+      moved here via new `is_safe_extension_name` helper (S19's rule, defensive
+      for the public entry point)
+- [x] dropped the private `extensions` field; `Generated` is now just `script`;
+      `write_db` simplified to open + `execute_batch(&self.script)`
+- [x] flipped the now-true claims: `run_dummy`'s `--sql` comment (main.rs), the
+      module doc (generate.rs), and README lines 108–111 ("not included in the
+      file" → "leads the file as `LOAD` statements"). `site/index.md` had no
+      `--sql` claim; `site/spec.md:160` is about validation connections (still
+      true, left as-is).
+- **verify (automated):** `cargo test --workspace` **415 passed** (was 414, +1),
+  clippy 0 warnings, fmt clean
+- **verify (manual):** ran the real binary `dbdict dummy dbdict.yaml --sql
+  export.sql` on a json-declaring dict — `export.sql` leads with `LOAD json;`
+  then `CREATE TABLE … payload JSON` then INSERTs. Self-contained, confirmed by
+  driving the artifact, not asserting it (insight 20260709-1128).
 
 ### session close
 - [ ] `/code-review` (agent, high effort) over the full session diff; address or
