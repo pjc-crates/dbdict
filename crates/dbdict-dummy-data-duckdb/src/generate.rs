@@ -27,6 +27,16 @@ use duckdb::Connection;
 use crate::types::{DuckType, parse_type};
 use crate::values::{ValueError, capacity, is_orderable, nth};
 
+/// Range-join slot width: each "one"-side row owns `SLOT_STRIDE` consecutive
+/// `nth` indices — a lower edge, an interior probe point, and an upper edge.
+/// Stride 3 is the *minimum* that leaves an index strictly between the edges
+/// (`nth(3i)` < `nth(3i + 1)` < `nth(3i + 2)`), so a probe value can sit inside
+/// slot `i` and outside every other slot for open and closed bounds alike; a
+/// stride of 2 would leave no interior index. `nth` is monotone for orderable
+/// types, so distinct slots never overlap. Roles are defined in
+/// `dbdict-dummy-data`'s `plan.rs`; this is where they turn into indices.
+const SLOT_STRIDE: u64 = 3;
+
 /// Why generation (or writing the result) failed.
 #[derive(Debug)]
 pub enum GenerateError {
@@ -122,7 +132,7 @@ impl fmt::Display for GenerateError {
                 "table \"{table}\" column \"{column}\": {rows} one-side row(s) need \
                  {} slot values but the type can only produce {capacity} — lower the \
                  row count or widen the type",
-                rows.saturating_mul(3)
+                rows.saturating_mul(SLOT_STRIDE)
             ),
             GenerateError::OutputExists { path } => write!(
                 f,
@@ -465,7 +475,7 @@ fn check_range_types(
                 Some(_) => {}
             }
             let cap = capacity(ty);
-            match slot_rows.checked_mul(3) {
+            match slot_rows.checked_mul(SLOT_STRIDE) {
                 Some(needed) if needed <= cap => {}
                 // overflow means the row count is astronomically beyond any
                 // type's capacity — same refusal
@@ -527,23 +537,25 @@ fn value_for(
         }
         Role::PlainFill => plain_fill_value(types, opts, table, column, row),
         Role::RangeBound { kind, .. } => {
-            // one-side row i owns slot i: edges at nth(3i) and nth(3i + 2).
-            // nth is monotone for orderable types, so slots never overlap
+            // one-side row i owns slot i: edges at the slot's first and last
+            // index (offsets 0 and SLOT_STRIDE-1 == 2). nth is monotone for
+            // orderable types, so slots never overlap
             let offset = match kind {
                 RangeBoundKind::Lower => 0,
                 RangeBoundKind::Upper => 2,
             };
-            literal(types, table, column, 3 * row + offset)
+            literal(types, table, column, SLOT_STRIDE * row + offset)
         }
         Role::RangeProbe {
             rel,
             one_table,
             injective,
         } => {
-            // nth(3k + 1) sits strictly between slot k's edges — inside
-            // slot k for open and closed bounds alike, outside every other
+            // the interior index (offset 1) sits strictly between slot k's
+            // edges — inside slot k for open and closed bounds alike, and
+            // outside every other slot
             let k = owner_for(plan, opts, *rel, one_table, *injective, row);
-            literal(types, table, column, 3 * k + 1)
+            literal(types, table, column, SLOT_STRIDE * k + 1)
         }
         Role::SlotEqCopy {
             rel,
