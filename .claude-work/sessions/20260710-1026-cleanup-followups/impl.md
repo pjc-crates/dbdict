@@ -52,21 +52,29 @@ Test-only change, but it exposes whether the real refusal path works.
   probes confirmed. `git status` clean except the intended cli.rs change.
 - **verify (manual):** the asserted phrase cannot appear in the temp-dir name
 
-### phase 3: extract the shared CLI load helper (item 1)
+### phase 3: extract the shared CLI load helper (item 1) — DONE 2026-07-10T11:09:52+12:00
 Behavior-preserving refactor — covered by existing CLI tests, no assertion edits.
-- [ ] add a helper in `crates/dbdict-cli/src/main.rs` — e.g.
-      `fn load_lowered_or_exit(dict: Option<PathBuf>) -> Result<(Problems, DataDict), ExitCode>`
-      folding: `resolve_dict_path` → `load_and_lower` → render load-errors (→
-      `Err(FAILURE)`) → render warnings on the Ok path (→ `Ok((problems, dict))`)
-- [ ] rewrite `run_resolve` (main.rs:301), `run_ddl` (main.rs:336), `run_dummy`
-      (main.rs:406) to call it; keep each command's *own* post-load logic
-      (typedef expand / ddl generate / dummy generate+write) in place
-- [ ] preserve exact stderr ordering and exit codes — warnings still print on the
-      Ok path before the command's own output
-- **verify (automated):** `cargo test -p dbdict-cli` fully green with **zero**
-  assertion changes (the whole point: behavior identical)
-- **verify (manual):** diff shows the three functions shrank to the helper call +
-  their unique tail; no message string changed
+- also (signature simpler than planned): callers used `problems` only to render
+  warnings, so the helper renders them internally and returns just
+  `Result<DataDict, ExitCode>` — no need to hand `ProblemSet` back. Added
+  `use dbdict::model::DataDict;`.
+- [x] added `fn load_lowered_or_exit(dict: Option<PathBuf>) -> Result<DataDict,
+      ExitCode>` folding `resolve_dict_path` → `load_and_lower` → render
+      load-errors (`Err(FAILURE)`) → render warnings on the Ok path (`Ok(dict)`).
+      The `Err(ExitCode)` early-exit idiom is documented on the helper.
+- [x] rewrote `run_resolve`, `run_ddl`, `run_dummy` to
+      `match load_lowered_or_exit(..) { Ok(d) => d, Err(code) => return code }`
+      and keep each command's own tail (typedef expand / ddl generate / dummy
+      generate+write). run_dummy still parses `--rows-table` *before* the load so
+      a malformed flag fails fast (ordering preserved).
+- [x] stderr ordering + exit codes unchanged — warnings still print before each
+      command's own output
+- **verify (automated):** `cargo test -p dbdict-cli` fully green (34 tests) with
+  **zero** assertion changes; `cargo test --workspace` green; clippy 0 warnings,
+  fmt clean
+- **verify (manual):** diff is 76+/91- — the three functions collapsed to the
+  helper call + their unique tail even after adding the documented helper; no
+  message string changed
 
 ### phase 4: make `--sql` a self-contained reproduction (item 2)
 The one real behavior change. Design (confirmed in goal): emit `LOAD name;` into

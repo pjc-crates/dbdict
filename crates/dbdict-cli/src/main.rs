@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use dbdict::ProblemSet;
+use dbdict::model::DataDict;
 
 #[derive(Parser)]
 #[command(name = "dbdict", version, about)]
@@ -298,12 +299,22 @@ fn run_validate(
 /// scratch DuckDB, and print the canonical expansions. Fails when the
 /// dictionary itself fails spec validation, or when any typedef won't expand
 /// (unknown, cyclic, or malformed — DuckDB's own error is printed inline).
-fn run_resolve(dict: Option<PathBuf>) -> ExitCode {
+/// Shared front half of the three model-consuming subcommands (resolve, ddl,
+/// dummy): resolve the optional dictionary path, load and lower it, and echo
+/// any warnings a successful load still carries. On success returns the lowered
+/// `DataDict`; on any failure it has already printed the reason and hands back
+/// the `ExitCode` for the caller to `return`.
+///
+/// The `Err(ExitCode)` shape is the early-exit idiom for functions that return
+/// `ExitCode` rather than `Result` — `?` isn't available, so each caller writes
+/// `match load_lowered_or_exit(..) { Ok(d) => d, Err(code) => return code }` and
+/// then proceeds with its own command-specific tail.
+fn load_lowered_or_exit(dict: Option<PathBuf>) -> Result<DataDict, ExitCode> {
     let dict_path = match resolve_dict_path(dict) {
         Ok(dict_path) => dict_path,
         Err(err) => {
             eprintln!("{err}");
-            return ExitCode::FAILURE;
+            return Err(ExitCode::FAILURE);
         }
     };
     match dbdict::load_and_lower(&dict_path) {
@@ -311,21 +322,29 @@ fn run_resolve(dict: Option<PathBuf>) -> ExitCode {
             for line in problems.render() {
                 eprintln!("{line}");
             }
-            ExitCode::FAILURE
+            Err(ExitCode::FAILURE)
         }
         Ok((problems, dict)) => {
             // an Ok load can still carry warnings — keep them visible
             for line in problems.render() {
                 eprintln!("{line}");
             }
-            let expansions = dbdict_duckdb::expand_typedefs(&dict);
-            print_typedef_expansions(&expansions);
-            if expansions.iter().any(|e| e.expansion.is_err()) {
-                ExitCode::FAILURE
-            } else {
-                ExitCode::SUCCESS
-            }
+            Ok(dict)
         }
+    }
+}
+
+fn run_resolve(dict: Option<PathBuf>) -> ExitCode {
+    let dict = match load_lowered_or_exit(dict) {
+        Ok(dict) => dict,
+        Err(code) => return code,
+    };
+    let expansions = dbdict_duckdb::expand_typedefs(&dict);
+    print_typedef_expansions(&expansions);
+    if expansions.iter().any(|e| e.expansion.is_err()) {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
@@ -334,35 +353,18 @@ fn run_resolve(dict: Option<PathBuf>) -> ExitCode {
 /// script that fails its scratch self-check — go to stderr with a nonzero
 /// exit, like the other commands.
 fn run_ddl(dict: Option<PathBuf>) -> ExitCode {
-    let dict_path = match resolve_dict_path(dict) {
-        Ok(dict_path) => dict_path,
+    let dict = match load_lowered_or_exit(dict) {
+        Ok(dict) => dict,
+        Err(code) => return code,
+    };
+    match dbdict_ddl::generate(&dict) {
+        Ok(script) => {
+            print!("{script}");
+            ExitCode::SUCCESS
+        }
         Err(err) => {
             eprintln!("{err}");
-            return ExitCode::FAILURE;
-        }
-    };
-    match dbdict::load_and_lower(&dict_path) {
-        Err(problems) => {
-            for line in problems.render() {
-                eprintln!("{line}");
-            }
             ExitCode::FAILURE
-        }
-        Ok((problems, dict)) => {
-            // an Ok load can still carry warnings — keep them visible
-            for line in problems.render() {
-                eprintln!("{line}");
-            }
-            match dbdict_ddl::generate(&dict) {
-                Ok(script) => {
-                    print!("{script}");
-                    ExitCode::SUCCESS
-                }
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            }
         }
     }
 }
@@ -414,67 +416,50 @@ fn run_dummy(args: DummyArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let dict_path = match resolve_dict_path(args.dict) {
-        Ok(dict_path) => dict_path,
+    let dict = match load_lowered_or_exit(args.dict) {
+        Ok(dict) => dict,
+        Err(code) => return code,
+    };
+    // fail fast before the expensive generate if the target exists and
+    // we may not replace it — avoids wasting a generation pass and any
+    // --sql side effect on a run that was always going to be refused
+    if out.exists() && !args.force {
+        eprintln!(
+            "output file {} already exists — refusing to overwrite (use --force)",
+            out.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    let opts = dbdict_dummy_data::GenerateOptions {
+        rows: args.rows,
+        table_rows,
+        seed: args.seed,
+        null_fraction: args.null_fraction,
+    };
+    let generated = match dbdict_dummy_data_duckdb::generate(&dict, &opts) {
+        Ok(generated) => generated,
         Err(err) => {
             eprintln!("{err}");
             return ExitCode::FAILURE;
         }
     };
-    match dbdict::load_and_lower(&dict_path) {
-        Err(problems) => {
-            for line in problems.render() {
-                eprintln!("{line}");
-            }
-            ExitCode::FAILURE
+    // optional --sql export: the DDL + INSERT script only. it is NOT a
+    // fully self-contained script — any declared duckdb extensions are
+    // LOADed by write_db itself, not written here
+    if let Some(sql_path) = args.sql.as_deref()
+        && let Err(err) = std::fs::write(sql_path, &generated.script)
+    {
+        eprintln!("could not write {}: {err}", sql_path.display());
+        return ExitCode::FAILURE;
+    }
+    match write_db_into_place(&generated, out) {
+        Ok(()) => {
+            println!("wrote dummy data to {}", out.display());
+            ExitCode::SUCCESS
         }
-        Ok((problems, dict)) => {
-            // an Ok load can still carry warnings — keep them visible
-            for line in problems.render() {
-                eprintln!("{line}");
-            }
-            // fail fast before the expensive generate if the target exists and
-            // we may not replace it — avoids wasting a generation pass and any
-            // --sql side effect on a run that was always going to be refused
-            if out.exists() && !args.force {
-                eprintln!(
-                    "output file {} already exists — refusing to overwrite (use --force)",
-                    out.display()
-                );
-                return ExitCode::FAILURE;
-            }
-            let opts = dbdict_dummy_data::GenerateOptions {
-                rows: args.rows,
-                table_rows,
-                seed: args.seed,
-                null_fraction: args.null_fraction,
-            };
-            let generated = match dbdict_dummy_data_duckdb::generate(&dict, &opts) {
-                Ok(generated) => generated,
-                Err(err) => {
-                    eprintln!("{err}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            // optional --sql export: the DDL + INSERT script only. it is NOT a
-            // fully self-contained script — any declared duckdb extensions are
-            // LOADed by write_db itself, not written here
-            if let Some(sql_path) = args.sql.as_deref()
-                && let Err(err) = std::fs::write(sql_path, &generated.script)
-            {
-                eprintln!("could not write {}: {err}", sql_path.display());
-                return ExitCode::FAILURE;
-            }
-            match write_db_into_place(&generated, out) {
-                Ok(()) => {
-                    println!("wrote dummy data to {}", out.display());
-                    ExitCode::SUCCESS
-                }
-                Err(err) => {
-                    eprintln!("{err}");
-                    ExitCode::FAILURE
-                }
-            }
+        Err(err) => {
+            eprintln!("{err}");
+            ExitCode::FAILURE
         }
     }
 }
