@@ -106,11 +106,11 @@ Commands:
   (default 0) for reproducible output. By default about 10% of each optional
   column's values are NULL; set `--null-fraction 0.0` to fill every value (or
   higher, up to `1.0`, for more NULLs). `--sql <file.sql>` also writes the
-  generated script for inspection — a self-contained reproduction: any declared
-  DuckDB extensions lead the file as `LOAD` statements, so running it on a bare
-  DuckDB rebuilds the same database. Values are correct rather than
-  realistic — no names, addresses, or distributions. Legacy (0.1.0)
-  dictionaries are refused.
+  generated script for inspection — it leads with a `LOAD` for each declared
+  DuckDB extension (it never `INSTALL`s them), so running the file rebuilds the
+  same database wherever those extensions are bundled or already installed.
+  Values are correct rather than realistic — no names, addresses, or
+  distributions. Legacy (0.1.0) dictionaries are refused.
 * `types duckdb` / `types parquet` print the column types of a data source.
 * `skill read` / `skill write` print embedded agent skills for working with
   data dictionaries, and `spec` prints the full specification.

@@ -960,4 +960,10 @@ fn ddl_refuses_a_legacy_dictionary() {
         stderr.contains("cannot generate DDL from a legacy"),
         "got:\n{stderr}"
     );
+    // "fails rather than emitting broken SQL" — nothing should reach stdout
+    assert!(
+        output.stdout.is_empty(),
+        "no DDL should be emitted on refusal, got stdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
 }

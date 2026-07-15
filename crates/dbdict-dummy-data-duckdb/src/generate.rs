@@ -4,8 +4,9 @@
 //! The script *is* the deliverable twice over: `write_db` executes it, and
 //! the CLI's `--sql` export writes the same text — so what a user debugs is
 //! exactly what built their database. Declared duckdb extensions are folded
-//! in as leading `LOAD` statements, so the script is self-contained: running
-//! it on a bare connection reproduces the database with no other setup.
+//! in as leading `LOAD` statements (never `INSTALL`), so the script reproduces
+//! the database on any connection where those extensions are available to
+//! load — bundled into the engine, or already installed.
 //!
 //! Value resolution rides on the plan's roles plus one convention: an
 //! *injective* fk draw always picks target row `k = i` (identity). Every
@@ -37,6 +38,8 @@ use crate::values::{ValueError, capacity, is_orderable, nth};
 /// stride of 2 would leave no interior index. `nth` is monotone for orderable
 /// types, so distinct slots never overlap. Roles are defined in
 /// `dbdict-dummy-data`'s `plan.rs`; this is where they turn into indices.
+/// note: the intra-slot offsets in `value_for` (lower 0, probe 1, upper 2) are
+/// hard-coupled to stride 3 — changing this constant means updating them too.
 const SLOT_STRIDE: u64 = 3;
 
 /// A duckdb extension name safe to interpolate into a `LOAD` statement:
@@ -177,8 +180,9 @@ impl From<DdlError> for GenerateError {
 #[derive(Debug, Clone)]
 pub struct Generated {
     /// leading `LOAD` per declared extension, then the DDL (types + tables),
-    /// then one INSERT per non-empty table in foreign-key-safe order — a
-    /// complete, standalone script, and exactly what the `--sql` export writes
+    /// then one INSERT per non-empty table in foreign-key-safe order — exactly
+    /// what the `--sql` export writes, and standalone wherever those extensions
+    /// are available to load (bundled or installed; the script never INSTALLs)
     pub script: String,
 }
 
@@ -189,8 +193,8 @@ impl Generated {
     /// caller decision (the CLI's `--force`).
     ///
     /// The script self-contains its extension `LOAD`s, so executing it is the
-    /// whole job — no separate setup, and running the `--sql` export by hand
-    /// does exactly the same thing.
+    /// whole job here, and running the `--sql` export by hand does the same —
+    /// wherever the declared extensions are available to load.
     pub fn write_db(&self, path: &Path) -> Result<(), GenerateError> {
         if path.exists() {
             return Err(GenerateError::OutputExists {
@@ -280,8 +284,9 @@ pub fn generate(dict: &DataDict, opts: &GenerateOptions) -> Result<Generated, Ge
 
     // declared extensions LOAD first, so any type or table that depends on one
     // (e.g. a JSON column) resolves when the script runs. folding the LOADs in
-    // here — rather than issuing them separately at write time — is what makes
-    // the script, and the `--sql` export of it, a complete standalone reproduction
+    // here — rather than issuing them separately at write time — is what lets the
+    // script (and its `--sql` export) reproduce the db standalone wherever those
+    // extensions are available to load; note we LOAD, never INSTALL
     let mut script = String::new();
     for ext in &dict.extensions {
         let name = &ext.value;

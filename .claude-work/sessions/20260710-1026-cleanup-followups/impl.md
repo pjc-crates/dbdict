@@ -111,10 +111,34 @@ field.
   driving the artifact, not asserting it (insight 20260709-1128).
 
 ### session close
-- [ ] `/code-review` (agent, high effort) over the full session diff; address or
-      explicitly defer each finding
-- [ ] `cargo test --workspace` + `cargo clippy --workspace` (0 warnings) +
-      `cargo fmt --check` all clean
+- [x] `/code-review` (agent, high effort) — 8 independent finder angles over the
+      session diff. Refactors traced **clean** (no wrong-data/crash bugs). Findings
+      addressed:
+  - **F1 (5 finders, CONFIRMED vs DuckDB docs) — FIXED:** the "bare DuckDB
+    rebuilds the db" self-containment claim was over-general — the script emits
+    only `LOAD`, never `INSTALL`, so it holds only for bundled/autoloadable
+    extensions. Scoped the wording in README, generate.rs (module/struct/write_db
+    docs + fold comment), and main.rs. (my own CLAUDE.md sourcing rule)
+  - **F2 (test-quality) — FIXED honestly:** first "strengthened" the round-trip by
+    disabling autoload — but an empirical probe REFUTED my own premise: json is
+    statically linked (`bundled,json`), so no connection setting can force the
+    explicit LOAD. Reverted that false comment; the text-contains
+    `contains("LOAD json;")` is documented as the real guard, round-trip as an
+    executability check. (the session's own "verify, don't assert" lesson, applied
+    to my fix)
+  - **F5 — FIXED:** legacy DDL test now asserts `stdout.is_empty()` ("fails rather
+    than emitting broken SQL" — was unverified).
+  - **F6 — FIXED:** dropped the trivial `load_at < first_create` (load_at ≡ 0).
+  - **F7 — FIXED:** round-trip row count relaxed `== 10` → `> 0` (decoupled from
+    the global default).
+  - **F9 — FIXED:** added a guard note that the intra-slot offsets are coupled to
+    stride 3.
+  - **F3 (charset rule in 3 crates) — DEFERRED** (user-directed) → follow-ups.
+  - **F4 (LOAD-failure message framing lost) — ACCEPTED** (user-directed): the
+    fold is the design; DuckDB's own `execute_batch` error still names the failing
+    extension. F8/F10 noted, no action.
+- [x] `cargo test --workspace` **415 passed**, `cargo clippy --workspace` 0
+      warnings, `cargo fmt` clean
 - [ ] `/ws close`
 
 ## decisions (resolved at plan time)
@@ -123,3 +147,15 @@ field.
   else skip (don't force a shared type/import).
 - Phase 4 verification: **round-trip** — re-execute the exported `.sql` alone on a
   fresh connection and assert the DB is reproduced (not just a text `contains`).
+
+## follow-ups (recorded, not built)
+- **Hoist the extension-name charset rule to one shared validator** (review F3):
+  it now lives in three copies — S19 (`dbdict/src/validate_spec.rs`),
+  `safe_extension_name` (`dbdict-duckdb/src/native.rs:353`), and
+  `is_safe_extension_name` (`dbdict-dummy-data-duckdb/src/generate.rs`). It is a
+  SQL-injection guard on untrusted dictionary input; a single `pub` fn in `dbdict`
+  core (where S19 is authoritative), called by all three, would kill the drift
+  risk. Deferred — a proper hoist touches core + both backends, beyond this
+  cleanup's scope. Both backends already depend on `dbdict`, so no new wiring.
+- **`--install-extensions`** (network `INSTALL` opt-in) — carried over from the
+  dummy-data-generator session; still LOAD-only. Its own future session.
