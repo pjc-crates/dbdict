@@ -19,6 +19,11 @@ Phase 2 pushes session commits first, so `main`'s final SHA will be a
 descendant of `33ffe89`, not `33ffe89` itself. Phase 2 records the actual
 value and phases 3–4 verify against that.
 
+**Recorded by phase 2 (2026-07-22):** `main` and `duckdb-source` both now point
+at `881dae02250e50c2e61ae2d2adfc613499632ace` (156 commits). This is the value
+phases 3 and 4 verify against. The pre-session `main` value `c1de1c8` remains
+an ancestor of it, so the phase-2 rollback path stays open.
+
 ## decision needed before phase 1
 
 **Annotated tags, not lightweight** — a deviation from the approved preview,
@@ -87,19 +92,34 @@ plan is unchanged either way.
 > second with `cannot lock ref … exists`). Nothing creates `archive/feature`,
 > so no mapping is needed and no mapping has to be remembered later.
 
-### phase 2: fast-forward main
+### phase 2: fast-forward main — DONE 2026-07-23T09:27:29+12:00
 
-- [ ] `git push origin duckdb-source` — session commits reach the remote first
-- [ ] re-verify the FF precondition against live refs:
+- [x] `git push origin duckdb-source` — session commits reach the remote first
+      → `33ffe89..881dae0`
+- [x] re-verify the FF precondition against live refs:
       `git merge-base --is-ancestor origin/main origin/duckdb-source`
-      — **if this fails, stop the session**
-- [ ] `git push origin duckdb-source:main` (plain push, no `--force`,
-      no `--force-with-lease` — a true FF needs neither)
-- [ ] record the resulting `main` SHA into this file for phases 3–4
-- **verify:**
-  `git ls-remote origin refs/heads/main` equals `origin/duckdb-source`'s tip;
-  `git rev-list --count origin/main` ≥ 155; `gh api …/branches/main` reports
-  the same SHA; GitHub default branch still `main`.
+      — **if this fails, stop the session** → PASS (`origin/main` was still
+      `c1de1c8`, a strict ancestor)
+- [x] `git push origin duckdb-source:main` (plain push, no `--force`,
+      no `--force-with-lease` — a true FF needs neither) → `c1de1c8..881dae0`
+- [x] record the resulting `main` SHA into this file for phases 3–4
+      → recorded above as `881dae0…`, 156 commits
+- **verify:** PASS — remote `main` == `origin/duckdb-source` == `881dae0`;
+  `git rev-list --count origin/main` = 156 (≥ 155); `gh api …/branches/main`
+  reports the same SHA; GitHub default branch still `main`.
+
+- also: the push output itself confirms no history was discarded. Git prints
+  `c1de1c8..881dae0` (two dots) for a fast-forward versus `+ a...b` (leading
+  `+`, three dots) for a forced update, so the separator is a free post-hoc
+  proof that the no-force constraint held. The precondition check proves an FF
+  is *possible*; the separator proves it is *what happened*. Neither
+  substitutes for the other — a `--force` would satisfy the precondition and
+  still rewrite history.
+- also: confirmed `c1de1c8` (pre-session `main`) is still an ancestor of the
+  new `main`, so the phase-2 rollback path documented below stays open.
+- note: no `/code-review` at this boundary either — the phase changed no code,
+  only refs and the plan record. Same reasoning as phase 1, recorded rather
+  than skipped silently.
 
 ### phase 3: delete branches, move checkout to main
 
