@@ -162,18 +162,38 @@ plan is unchanged either way.
 - note: no `/code-review` at this boundary — phase changed no code, only refs
   and the plan record. Phase 4 runs the full test/clippy/fmt suite.
 
-### phase 4: verification from a clean main checkout
+### phase 4: verification from a clean main checkout — DONE 2026-07-23T10:08:19+12:00
 
-- [ ] `git status` — clean bar the known-untracked `research/`
-- [ ] `cargo test --workspace` — expect 415 passed / 0 failed
-- [ ] `cargo clippy --workspace --all-targets` — 0 warnings
-- [ ] `cargo fmt --check` — clean
-- [ ] confirm `Cargo.toml` `repository` and `LEARN_MORE_URL` still read
+- [x] `git status` — clean bar the known-untracked `research/` → 0 changes
+- [x] `cargo test --workspace` — expect 415 passed / 0 failed → **415 / 0**
+- [x] `cargo clippy --workspace --all-targets` — 0 warnings → 0
+- [x] `cargo fmt --check` — clean → clean
+- [x] confirm `Cargo.toml` `repository` and `LEARN_MORE_URL` still read
       `pjc-crates` (they were rewritten pre-session; this catches a bad merge)
-- [ ] spot-check the archive path actually works:
-      `git log --oneline -1 archive/feature-vscode` resolves without network
-- **verify:** all four commands green; the archive spot-check prints
-  `8fe8b5b`; goal.md's success criteria each tick off.
+      → both correct; 0 `pjc-wspace` refs remain outside `.claude-work/`
+- [x] spot-check the archive path actually works:
+      `git log --oneline -1 archive/feature/vscode` resolves without network
+      → `8fe8b5b Appropriate temporary directory`; all 5 tags resolve locally
+- **verify:** PASS — all four commands green; archive spot-check printed
+  `8fe8b5b`; every goal.md success criterion ticked off.
+
+- correction: this phase's step said "clean bar the known-untracked
+  `research/`". `research/` is **tracked**, not untracked — its two files were
+  committed 2026-07-19 in `fa83c71` alongside the session-tracker clear. The
+  open housekeeping question carried in the 2026-07-19 checkpoint was already
+  resolved before this session began. `git status` is genuinely clean.
+- also: the goal predicted `main` at 154 commits; it landed at 157. The
+  difference is the three bookkeeping commits this session wrote about itself
+  (`b951c73` open, `881dae0` phase 1, `93eab52` phase 2). A session that
+  records its own progress into the repo it is modifying moves its own target
+  while running — which is why phase 2's verify was written as `>= 155` rather
+  than an exact count. Exact commit counts are the wrong shape for a success
+  criterion in a self-recording workflow.
+- note: `/code-review` not run. This is the one phase with code in scope, but
+  the session changed no code at all — the working tree is byte-identical to
+  the pre-session state, and the full suite (415 tests, clippy, fmt) passing is
+  the evidence for that. Recorded rather than skipped silently, consistent with
+  phases 1–3.
 
 ## rollback
 
