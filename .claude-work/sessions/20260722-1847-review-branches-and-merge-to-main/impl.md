@@ -35,26 +35,50 @@ plan is unchanged either way.
 
 ## phases
 
-### phase 1: archive tags
+### phase 1: archive tags — DONE 2026-07-22T19:27:53+12:00
 
-- [ ] commit the session files (`.claude-work/.active`, session dir) on
+- [x] commit the session files (`.claude-work/.active`, session dir) on
       `duckdb-source` — they must exist before the FF or they don't reach `main`
-- [ ] create 5 annotated tags at the recorded SHAs (not at `origin/<branch>`,
+      → commit `b951c73`, 3 files / 246 insertions
+- [x] create 5 annotated tags at the recorded SHAs (not at `origin/<branch>`,
       which could have moved):
       ```
-      git tag -a archive/yaml-schema         4904951 -m "archived upstream branch, 2026-07-22"
+      git tag -a archive/yaml-schema         4904951 -m "…"
       git tag -a archive/more-constraints    756747a -m "…"
       git tag -a archive/feature/vscode      8fe8b5b -m "…"
       git tag -a archive/uniqueness          9dd994a -m "…"
       git tag -a archive/d03-enum-validation ee2c0d9 -m "…"
       ```
-- [ ] push all 5 tags: `git push origin --tags`
-- [ ] confirm each tag exists **on the remote** and dereferences to the
+- [x] push all 5 tags: `git push origin --tags` — all 5 reported `[new tag]`
+- [x] confirm each tag exists **on the remote** and dereferences to the
       recorded SHA (annotated tags need `^{}` to deref past the tag object)
-- **verify:**
-  `git ls-remote --tags origin 'refs/tags/archive/*'` lists 5 tags; each
-  `<tag>^{}` equals its recorded SHA from the table above. Zero mismatches.
-  **This phase must be fully green before phase 3 runs.**
+- **verify:** PASS — `git ls-remote --tags origin 'refs/tags/archive/*'`
+  returns 5 tag objects + 5 dereferenced peels; all 5 `^{}` values equal their
+  recorded SHAs; zero mismatches. Cross-checked independently via
+  `gh api repos/pjc-crates/dbdict/tags`, which agrees on all five.
+  **Phase 3 is cleared to run on this basis.**
+
+- also: tag annotations went well beyond the planned one-liner. Each records
+  the branch's unique-commit count, author, date, file count, distance behind
+  `main`, why it was archived, and a working restore command
+  (`git push origin archive/<x>^{}:refs/heads/<x>`). Verified via
+  `gh api …/git/tags/<sha>` that the annotation survives the push intact.
+  Two carry substantive notes: `feature/vscode` is flagged as the only branch
+  not superseded by dbdict's own work, and `d03-enum-validation` records the
+  identifier collision (upstream D03 = enum validation, dbdict D03 = unique
+  column check).
+- also: the tagger identity reads `pjc on thelio25`, not `Peter Crosbie`.
+  Raised as a possible misconfiguration; user confirmed it is deliberate — two
+  git identities, author for the real name and committer for machine
+  provenance, so the machine is tracked without cluttering commit messages.
+  `git tag -a` takes its tagger from the committer identity. No action; not a
+  defect. Recorded as a memory so it is not re-flagged.
+- not done: `/code-review` at this phase boundary, contrary to the standing
+  mandate in `.claude-work/memory/regular-code-reviews.md`. This phase changed
+  no code — its diff is two markdown files plus git refs — and the session's
+  operating instructions bar spawning review agents unrequested. Flagged to
+  the user rather than skipped silently; phase 4 is the boundary where a
+  review would have something to read.
 
 > Tag names mirror branch names exactly, including `archive/feature/vscode`.
 > Verified empirically in a scratch repo: a nested tag is legal on its own —
