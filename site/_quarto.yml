@@ -4,8 +4,8 @@ project:
 
 website:
   title: "dbdict.yaml"
-  site-url: https://pjc-wspace.github.io/dbdict/
-  repo-url: https://github.com/pjc-wspace/dbdict
+  site-url: https://pjc-crates.github.io/dbdict/
+  repo-url: https://github.com/pjc-crates/dbdict
   description: >
     A DuckDB-native YAML data dictionary specification for describing
     collections of related tables — their columns, exact types, constraints,
@@ -23,7 +23,7 @@ website:
         text: Examples
     right:
       - icon: github
-        href: https://github.com/pjc-wspace/dbdict
+        href: https://github.com/pjc-crates/dbdict
         aria-label: GitHub
 
 format:

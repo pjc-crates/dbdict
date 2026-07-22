@@ -14,7 +14,7 @@ members = [
 version = "0.0.1"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/pjc-wspace/dbdict"
+repository = "https://github.com/pjc-crates/dbdict"
 
 [workspace.dependencies]
 dbdict = { path = "crates/dbdict", version = "0.0.1" }

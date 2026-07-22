@@ -123,13 +123,13 @@ installed on `PATH`, and the dictionary's database is always opened read-only.
 Build and install from source with [Cargo](https://rustup.rs):
 
 ```bash
-cargo install --git https://github.com/pjc-wspace/dbdict dbdict-cli
+cargo install --git https://github.com/pjc-crates/dbdict dbdict-cli
 ```
 
 Or clone the repo and build locally:
 
 ```bash
-git clone https://github.com/pjc-wspace/dbdict.git
+git clone https://github.com/pjc-crates/dbdict.git
 cd dbdict
 cargo build --workspace --release
 # binary is at target/release/dbdict

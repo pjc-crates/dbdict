@@ -11,7 +11,7 @@ warning: [S09] A document should point readers to the spec with `$learn_more`.
   |
 help: point readers to the spec
   |
-2 + $learn_more: https://github.com/pjc-wspace/dbdict
+2 + $learn_more: https://github.com/pjc-crates/dbdict
   |
 error: [S07] A `number(id)` column must describe its data with `examples`.
  --> <fixture>:9:15

@@ -42,7 +42,7 @@ fn write_dict(dir: &Path, yaml: &str) -> PathBuf {
 /// `trades` table using them alongside native type expressions.
 const DICT: &str = indoc! {r#"
     $version: "0.2.0"
-    $learn_more: https://github.com/pjc-wspace/dbdict
+    $learn_more: https://github.com/pjc-crates/dbdict
     typedef:
       money: DECIMAL(12, 2)
       address: STRUCT(city VARCHAR, postcode INTEGER)
@@ -220,7 +220,7 @@ fn cyclic_typedef_reports_m08_with_duckdbs_reason() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             typedef:
               cyc_a: cyc_b
               cyc_b: cyc_a

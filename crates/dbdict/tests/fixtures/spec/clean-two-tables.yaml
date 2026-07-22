@@ -4,7 +4,7 @@
 # `food.id` omits column-level description to exercise that it is optional.
 
 $version: "0.1.0"
-$learn_more: https://github.com/pjc-wspace/dbdict
+$learn_more: https://github.com/pjc-crates/dbdict
 
 tables:
   - name: food

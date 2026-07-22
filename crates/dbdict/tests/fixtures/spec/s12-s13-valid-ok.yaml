@@ -1,7 +1,7 @@
 # expected: valid - representation values match their types and ranges are ascending.
 
 $version: 0.1.0
-$learn_more: https://github.com/pjc-wspace/dbdict
+$learn_more: https://github.com/pjc-crates/dbdict
 
 tables:
   - name: table

@@ -76,7 +76,7 @@ fn validate_meta_rich_round_trip_succeeds() {
         &dict,
         indoc::indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             typedef:
               money: DECIMAL(12, 2)
             source:
@@ -125,7 +125,7 @@ fn resolve_prints_global_and_scoped_expansions() {
         &dict,
         indoc::indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             typedef:
               money: DECIMAL(12, 2)
               address: STRUCT(city VARCHAR, postcode INTEGER)
@@ -159,7 +159,7 @@ fn resolve_fails_on_a_broken_typedef() {
         &dict,
         indoc::indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             typedef:
               dangling: NO_SUCH_TYPE
             tables: []
@@ -190,7 +190,7 @@ fn resolve_on_a_legacy_dictionary_reports_no_typedefs() {
         &dict,
         indoc::indoc! {r#"
             $version: "0.1.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             tables: []
         "#},
     )
@@ -241,7 +241,7 @@ fn dummy_fixture(dir: &std::path::Path) -> PathBuf {
         &dict,
         indoc::indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             source:
               duckdb:
                 file: gen.duckdb
@@ -564,7 +564,7 @@ fn dummy_refuses_a_legacy_dictionary() {
         &dict,
         indoc::indoc! {r#"
             $version: 0.1.0
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             tables:
               - name: trades
                 columns:
@@ -707,7 +707,7 @@ fn validate_data_rich_reports_d01_through_d05() {
         &dict,
         indoc::indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -794,7 +794,7 @@ fn validate_data_rich_clean_passes() {
         &dict,
         indoc::indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -856,7 +856,7 @@ fn ddl_prints_an_executable_script() {
         &dict,
         indoc::indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             typedef:
               big: money[]
               money: DECIMAL(18, 4)
@@ -895,7 +895,7 @@ fn ddl_refuses_shadowed_typedefs() {
         &dict,
         indoc::indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             typedef:
               money: DECIMAL(18, 4)
             tables:
@@ -938,7 +938,7 @@ fn ddl_refuses_a_legacy_dictionary() {
         &dict,
         indoc::indoc! {r#"
             $version: 0.1.0
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             tables:
               - name: trades
                 columns:

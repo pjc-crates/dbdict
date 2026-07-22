@@ -2,7 +2,7 @@
 source: crates/dbdict/tests/rich.rs
 ---
 $version: "0.2.0"
-$learn_more: https://github.com/pjc-wspace/dbdict
+$learn_more: https://github.com/pjc-crates/dbdict
 duckdb:
   extensions:
     - Spatial-Extras

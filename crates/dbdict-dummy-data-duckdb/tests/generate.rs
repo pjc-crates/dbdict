@@ -50,7 +50,7 @@ fn load(dict_path: &std::path::Path) -> dbdict::model::DataDict {
 /// declared *before* its fk target so generation must reorder the inserts.
 const RICH_DICT: &str = indoc! {r#"
     $version: "0.2.0"
-    $learn_more: https://github.com/pjc-wspace/dbdict
+    $learn_more: https://github.com/pjc-crates/dbdict
     typedef:
       money: DECIMAL(12, 2)
       side: ENUM('buy', 'sell')
@@ -185,7 +185,7 @@ fn exported_script_self_contains_extension_loads_and_reproduces_the_db() {
 fn one_to_one_with_unique_fk_passes_validate_data() {
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -245,7 +245,7 @@ fn range_dict(
 ) -> String {
     format!(
         r#"$version: "0.2.0"
-$learn_more: https://github.com/pjc-wspace/dbdict
+$learn_more: https://github.com/pjc-crates/dbdict
 source:
   duckdb:
     file: data.duckdb
@@ -313,7 +313,7 @@ fn many_to_one_range_join_with_non_unique_bound_validates() {
     // without any declared uniqueness
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -436,7 +436,7 @@ fn same_seed_is_byte_identical_and_different_seed_differs() {
 fn null_fraction_one_nulls_every_optional_value_and_still_validates() {
     let yaml = indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -495,7 +495,7 @@ fn null_fraction_one_nulls_every_optional_value_and_still_validates() {
 fn write_db_refuses_an_existing_file() {
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -524,7 +524,7 @@ fn write_db_refuses_an_existing_file() {
 fn unique_enum_with_more_rows_than_variants_is_refused() {
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -560,7 +560,7 @@ fn non_orderable_range_column_is_refused() {
     // is not monotone for them — slots would not be ordered intervals
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -608,7 +608,7 @@ fn mismatched_range_column_types_are_refused() {
     // sequences proves nothing about containment
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -655,7 +655,7 @@ fn eq_copy_type_mismatch_with_its_source_is_refused() {
     // type the stored value could silently diverge, so refuse instead
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -707,7 +707,7 @@ fn eq_copy_from_an_untyped_source_is_refused() {
     // no stored value to copy — refuse descriptively rather than panic
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -759,7 +759,7 @@ fn range_slots_exceeding_type_capacity_are_refused() {
     // mirroring the unique-capacity check
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -813,7 +813,7 @@ fn eq_copy_from_a_non_recomputable_source_is_refused() {
     // with an internal error
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -875,7 +875,7 @@ fn untyped_range_bound_column_is_refused() {
     // cannot check
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb
@@ -920,7 +920,7 @@ fn a_type_the_engine_rejects_is_refused_at_instantiation() {
     // INET needs the inet extension, which this build does not link
     let dict_path = fixture(indoc! {r#"
         $version: "0.2.0"
-        $learn_more: https://github.com/pjc-wspace/dbdict
+        $learn_more: https://github.com/pjc-crates/dbdict
         source:
           duckdb:
             file: data.duckdb

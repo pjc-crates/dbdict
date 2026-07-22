@@ -16,7 +16,7 @@ use indoc::indoc;
 /// the rich-format boilerplate header, mirroring `common::HEADER` (which is
 /// pinned to 0.1.0). two lines, so a `body` written beneath starts at line 3
 const RICH_HEADER: &str =
-    "$version: \"0.2.0\"\n$learn_more: https://github.com/pjc-wspace/dbdict\n";
+    "$version: \"0.2.0\"\n$learn_more: https://github.com/pjc-crates/dbdict\n";
 
 /// write `body` beneath the rich header to a temp file and return its path
 fn rich(body: &str) -> PathBuf {
@@ -94,7 +94,7 @@ fn unquoted_version_selects_rich_schema() {
         &common::temp_dir(),
         indoc! {"
             $version: 0.2.0
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             tables:
               - name: trades
                 columns:

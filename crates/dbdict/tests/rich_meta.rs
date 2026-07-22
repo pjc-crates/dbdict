@@ -113,7 +113,7 @@ fn write_trades_dict(dir: &Path) -> PathBuf {
         dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             typedef:
               money: DECIMAL(12, 2)
             source:
@@ -244,7 +244,7 @@ fn missing_dict_source_is_m04() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             tables:
               - name: trades
                 columns:
@@ -425,7 +425,7 @@ fn rejected_typedefs_are_m08_at_their_spans() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             typedef:
               ref_a: ref_b
               ref_b: ref_a
@@ -540,7 +540,7 @@ fn two_table_fixture(dir: &Path) -> (PathBuf, FakeDuckdb) {
         dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -719,7 +719,7 @@ fn absolute_database_path_is_used_verbatim() {
         &dir,
         &format!(
             "$version: \"0.2.0\"\n\
-             $learn_more: https://github.com/pjc-wspace/dbdict\n\
+             $learn_more: https://github.com/pjc-crates/dbdict\n\
              source:\n  duckdb:\n    file: {}\n\
              tables:\n  - name: trades\n    columns:\n      - name: qty\n        type: BIGINT\n",
             abs.display()
@@ -799,7 +799,7 @@ fn instantiation_failures_report_even_when_the_database_is_unreadable() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             typedef:
               broken: NO_SUCH_TYPE
             source:
@@ -842,7 +842,7 @@ fn untyped_column_makes_no_type_claim() {
         &dir,
         indoc! {r#"
             $version: "0.2.0"
-            $learn_more: https://github.com/pjc-wspace/dbdict
+            $learn_more: https://github.com/pjc-crates/dbdict
             source:
               duckdb:
                 file: warehouse.duckdb
@@ -889,7 +889,7 @@ fn one_column_fixture(
         dir,
         &format!(
             "$version: \"0.2.0\"\n\
-             $learn_more: https://github.com/pjc-wspace/dbdict\n\
+             $learn_more: https://github.com/pjc-crates/dbdict\n\
              source:\n  duckdb:\n    file: warehouse.duckdb\n\
              tables:\n  - name: t\n    columns:\n      - name: c\n{column}\n"
         ),
@@ -1111,7 +1111,7 @@ mod extension_checks {
             dir,
             indoc! {r#"
                 $version: "0.2.0"
-                $learn_more: https://github.com/pjc-wspace/dbdict
+                $learn_more: https://github.com/pjc-crates/dbdict
                 duckdb:
                   extensions:
                     - json

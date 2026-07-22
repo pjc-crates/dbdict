@@ -19,7 +19,7 @@ cardinality). It can also generate an executable DDL script from the
 dictionary, and generate a DuckDB database of dummy data whose values satisfy
 every declared constraint by construction. See [the specification](spec.md)
 and [validation](validation.md)
-for details, or the [CLI](https://github.com/pjc-wspace/dbdict#readme) to get
+for details, or the [CLI](https://github.com/pjc-crates/dbdict#readme) to get
 started.
 
 ## Lineage
@@ -87,7 +87,7 @@ data actually _means_.
 ## Direction
 
 The validator, the DDL generator, and the dummy-data generator ship today (see
-the [CLI](https://github.com/pjc-wspace/dbdict#readme)) — the last generating
+the [CLI](https://github.com/pjc-crates/dbdict#readme)) — the last generating
 sample data that satisfies the declared types, constraints, and relationship
 cardinalities by construction. The architecture separates the dictionary model
 from the tools that consume it, and more consumers are planned:

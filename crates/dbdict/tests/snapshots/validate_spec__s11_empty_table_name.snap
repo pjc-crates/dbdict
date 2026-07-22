@@ -3,7 +3,7 @@ source: crates/dbdict/tests/validate_spec.rs
 assertion_line: 583
 ---
 $version: "0.1.0"
-$learn_more: https://github.com/pjc-wspace/dbdict
+$learn_more: https://github.com/pjc-crates/dbdict
 tables:
   - name: ""
     columns:

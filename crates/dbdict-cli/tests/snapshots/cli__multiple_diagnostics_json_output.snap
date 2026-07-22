@@ -18,7 +18,7 @@ expression: "serde_json::to_string_pretty(&value).unwrap()"
       "message": "`$learn_more` is not set",
       "severity": "warning",
       "suggestion": {
-        "replacement": "$learn_more: https://github.com/pjc-wspace/dbdict\n",
+        "replacement": "$learn_more: https://github.com/pjc-crates/dbdict\n",
         "title": "point readers to the spec"
       }
     },
