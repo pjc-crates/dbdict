@@ -121,24 +121,46 @@ plan is unchanged either way.
   only refs and the plan record. Same reasoning as phase 1, recorded rather
   than skipped silently.
 
-### phase 3: delete branches, move checkout to main
+### phase 3: delete branches, move checkout to main — DONE 2026-07-23T09:50:33+12:00
 
-- [ ] **re-verify all 5 archive tags on the remote** — the guard immediately
+- [x] **re-verify all 5 archive tags on the remote** — the guard immediately
       before the only irreversible step, deliberately repeated from phase 1
-- [ ] delete the 5 upstream branches:
+      → GATE PASS, 5/5 resolve to recorded SHAs
+- [x] delete the 5 upstream branches:
       `git push origin --delete yaml-schema more-constraints feature/vscode uniqueness d03-enum-validation`
-- [ ] `git checkout main && git merge --ff-only origin/main` — local `main`
+      → all 5 `[deleted]`; tags re-checked immediately after and all 5 still
+      resolve
+- [x] **[amended]** `git push origin duckdb-source:main` — carry the phase-2
+      bookkeeping commit onto `main` *before* the delete → `881dae0..93eab52`
+- [x] `git checkout main && git merge --ff-only origin/main` — local `main`
       catches up (cannot delete `duckdb-source` while it is checked out)
-- [ ] `git push origin --delete duckdb-source`
-- [ ] `git branch -d duckdb-source` (`-d`, never `-D` — refuses if not merged,
+      → local `main` fast-forwarded 45 commits to `93eab52`
+- [x] `git push origin --delete duckdb-source` → `[deleted]`
+- [x] `git branch -d duckdb-source` (`-d`, never `-D` — refuses if not merged,
       which is exactly the safety check wanted here)
-- [ ] `git fetch --prune`; `git remote set-head origin -a` so `origin/HEAD`
-      tracks `main`
-- **verify:**
-  `git ls-remote --heads origin` returns exactly one line, `refs/heads/main`;
-  all 5 `archive/*` tags **still** resolve to their recorded SHAs *after* the
-  deletes; `git branch` shows only `main`; `git rev-parse HEAD` equals
-  phase 2's recorded `main` SHA.
+      → `Deleted branch duckdb-source (was 93eab52)`
+- [x] `git fetch --prune`; `git remote set-head origin -a` so `origin/HEAD`
+      tracks `main` → `origin/HEAD set to main`
+- **verify:** PASS — `git ls-remote --heads origin` returns exactly one line,
+  `refs/heads/main`; all 5 `archive/*` tags still resolve to their recorded
+  SHAs *after* the deletes; `git branch` shows only `main`; `HEAD` ==
+  `origin/main` == `93eab52`; local `main` tracks `origin/main`.
+
+- **amendment (discovered during phase 2's commit):** the plan as written could
+  not have completed. Every `/ws done` writes a record commit onto
+  `duckdb-source` — including the commit recording the phase — so `main` is
+  necessarily one commit behind at the moment phase 3 runs. `git branch -d`
+  correctly refused that state. Fixed by inserting the extra
+  `git push origin duckdb-source:main` above, before any delete. The verify
+  target changed with it: `HEAD` is `93eab52`, not phase 2's recorded
+  `881dae0`, because of that fast-forward.
+- also: the `-d`-not-`-D` choice was made in planning as a generic guard, with
+  no specific hazard in mind. It caught a gap the plan had not anticipated.
+  `-D` would have silently discarded the phase-2 record. Captured as an
+  insight — prefer the refusing variant of a destructive command even when
+  confident it is unnecessary; the cost of being wrong is asymmetric.
+- note: no `/code-review` at this boundary — phase changed no code, only refs
+  and the plan record. Phase 4 runs the full test/clippy/fmt suite.
 
 ### phase 4: verification from a clean main checkout
 
